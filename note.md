@@ -23,16 +23,17 @@ helm install strimzi strimzi/strimzi-kafka-operator \
 
 helm repo add kafka-ui https://provectus.github.io/kafka-ui-charts
 
+k apply -f kafka_cluster.yaml -n kafka
+
 helm upgrade --install kafka-ui kafka-ui/kafka-ui \
   --namespace kafka \
   --set envs.config.KAFKA_CLUSTERS_0_NAME=kafka-cluster-0 \
-  --set envs.config.KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka-cluster-1-kafka-bootstrap:9092 \
+  --set envs.config.KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka-cluster-0-kafka-bootstrap:9092 \
   --set ingress.enabled=true \
   --set ingress.host=kafka.ducdh.com \
   --set ingress.ingressClassName=nginx
 
 
-k apply -f kafka_cluster.yaml -n kafka
 
 helm upgrade --install airflow apache-airflow/airflow \
  --namespace airflow \
@@ -91,11 +92,7 @@ helm install minio minio/minio \
 
 mc alias set localMinio http://minio.ducdh.com minio minio123
 mc mb localMinio/bronze-layer
-mc mb localMinio/mlflow
-
-mc cp --recursive ./data localMinio/bronze-layer
-mc ls --recursive localMinio/bronze-layer
 
 
-git clone https://github.com/confluentinc/cp-helm-charts.git
-helm install cp-helm-charts
+
+helm upgrade --install kafka-infra ./kafka -n kafka --create-namespace

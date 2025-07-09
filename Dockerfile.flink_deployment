@@ -1,0 +1,20 @@
+FROM python:3.11.11-slim AS python-base
+
+FROM flink:1.20.1-scala_2.12-java11 AS flink-python
+
+RUN apt-get update && apt-get install -y sudo wget && apt-get clean
+
+COPY --from=python-base /usr/local/bin/python3.11 /usr/local/bin/python3.11
+COPY --from=python-base /usr/local/bin/python3 /usr/local/bin/python3
+COPY --from=python-base /usr/local/lib/python3.11 /usr/local/lib/python3.11
+COPY --from=python-base /usr/local/include/python3.11 /usr/local/include/python3.11
+COPY --from=python-base /usr/local/bin/pip3 /usr/local/bin/pip3
+COPY --from=python-base /usr/local/bin/pip /usr/local/bin/pip
+
+RUN ln -sf /usr/local/bin/python3.11 /usr/local/bin/python && \
+    ln -sf /usr/local/bin/pip3 /usr/local/bin/pip
+
+COPY requirements.txt /
+RUN pip install -r /requirements.txt
+
+COPY ./flink/jars/*.jar /opt/flink/lib/
