@@ -75,3 +75,5 @@ wget https://packages.confluent.io/maven/io/confluent/kafka-avro-serializer/7.5.
 
 mc alias set localMinio http://minio.ducdh.com minio minio123
 mc mb localMinio/bronze-layer
+
+tuyetquanne
