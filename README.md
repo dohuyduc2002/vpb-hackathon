@@ -10,8 +10,8 @@ kaggle datasets download ealtman2019/credit-card-transactions
 
 docker buildx build --no-cache\
     --platform linux/amd64 \
-    --file Dockerfile \
-    --tag microwave1005/kafka-connect-s3:0.0.1 \
+    -f Dockerfile.kafka_connect \
+    -t microwave1005/kafka-connect-s3:0.0.1 \
     --push \
     .
 
@@ -36,11 +36,10 @@ helm install strimzi strimzi/strimzi-kafka-operator \
 
 ## Install Kafka infra
 helm upgrade --install kafka-infra ./kafka -n kafka --create-namespace
-
 # Install Minio
 helm repo add minio https://charts.min.io/
 
-helm install minio minio/minio \
+helm upgrade --install minio minio/minio \
   --namespace minio \
   --create-namespace \
   --set mode=standalone \
@@ -68,6 +67,7 @@ wget https://repo1.maven.org/maven2/org/apache/avro/avro/1.12.0/avro-1.12.0.jar
 wget https://repo1.maven.org/maven2/org/apache/flink/flink-avro/1.20.0/flink-avro-1.20.0.jar
 wget https://repo1.maven.org/maven2/org/apache/flink/flink-parquet/1.20.0/flink-parquet-1.20.0.jar
 wget https://repo1.maven.org/maven2/org/apache/flink/flink-s3-fs-hadoop/1.20.0/flink-s3-fs-hadoop-1.20.0.jar
+wget https://repo1.maven.org/maven2/org/apache/flink/flink-avro-confluent-registry/1.20.0/flink-avro-confluent-registry-1.20.0.jar
 
 wget https://packages.confluent.io/maven/io/confluent/kafka-schema-registry-client/7.5.0/kafka-schema-registry-client-7.5.0.jar
 wget https://packages.confluent.io/maven/io/confluent/kafka-avro-serializer/7.5.0/kafka-avro-serializer-7.5.0.jar
@@ -75,3 +75,37 @@ wget https://packages.confluent.io/maven/io/confluent/kafka-avro-serializer/7.5.
 
 mc alias set localMinio http://minio.ducdh.com minio minio123
 mc mb localMinio/bronze-layer
+mc mb localMinio/milvus-bucket
+mc mb localMinio/flink-data
+mc mb localMinio/silver-layer
+
+# Milvus 
+```bash
+helm repo add milvus https://zilliztech.github.io/milvus-helm/
+helm install milvus milvus/milvus \
+  --namespace milvus \
+  --create-namespace \
+  --set image.all.tag=v2.6.0-rc1 \
+  --set cluster.enabled=false \
+  --set minio.enabled=false \
+  --set externalS3.enabled=true \
+  --set externalS3.host=minio.minio.svc.cluster.local \
+  --set externalS3.port=9000 \
+  --set externalS3.accessKey=minio \
+  --set externalS3.secretKey=minio123 \
+  --set externalS3.bucketName=milvus-bucket \
+  --set externalS3.useSSL=false \
+  --set standalone.messageQueue=woodpecker \
+  --set woodpecker.enabled=true \
+  --set streaming.enabled=true \
+  --set ingress.enabled=true \
+  --set ingress.ingressClassName=nginx \
+  --set standalone.persistentVolumeClaim.size=5Gi \
+  --set attu.enabled=true \
+  --set attu.ingress.enabled=true \
+  --set attu.ingress.ingressClassName=nginx \
+  --set pulsarv3.enabled=false
+
+
+
+

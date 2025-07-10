@@ -1,20 +1,38 @@
-FROM python:3.11.11-slim AS python-base
-
 FROM flink:1.20.1-scala_2.12-java11 AS flink-python
+
+RUN apt-get update && \
+    apt-get install -y python3.11 python3.11-dev python3-pip sudo wget && \
+    ln -sf python3.11 /usr/bin/python3 && \
+    ln -sf pip3 /usr/bin/pip
 
 RUN apt-get update && apt-get install -y sudo wget && apt-get clean
 
-COPY --from=python-base /usr/local/bin/python3.11 /usr/local/bin/python3.11
-COPY --from=python-base /usr/local/bin/python3 /usr/local/bin/python3
-COPY --from=python-base /usr/local/lib/python3.11 /usr/local/lib/python3.11
-COPY --from=python-base /usr/local/include/python3.11 /usr/local/include/python3.11
-COPY --from=python-base /usr/local/bin/pip3 /usr/local/bin/pip3
-COPY --from=python-base /usr/local/bin/pip /usr/local/bin/pip
+ARG BOOTSTRAP_SERVERS="35.192.41.150:9094"
+ARG SCHEMA_REGISTRY_URL="http://34.172.236.120:8081"
 
-RUN ln -sf /usr/local/bin/python3.11 /usr/local/bin/python && \
-    ln -sf /usr/local/bin/pip3 /usr/local/bin/pip
+ENV BOOTSTRAP_SERVERS=${BOOTSTRAP_SERVERS}
+ENV SCHEMA_REGISTRY_URL=${SCHEMA_REGISTRY_URL}
+ENV DISABLE_JEMALLOC=true
 
 COPY requirements.txt /
 RUN pip install -r /requirements.txt
 
-COPY ./flink/jars/*.jar /opt/flink/lib/
+# copy jars
+COPY ./flink/jars/avro-1.12.0.jar /opt/flink/lib/
+COPY ./flink/jars/flink-avro-1.20.0.jar /opt/flink/lib/
+COPY ./flink/jars/flink-connector-kafka-3.4.0-1.20.jar /opt/flink/lib/
+COPY ./flink/jars/flink-java-1.20.0.jar /opt/flink/lib/
+COPY ./flink/jars/flink-parquet-1.20.0.jar /opt/flink/lib/
+COPY ./flink/jars/flink-python-1.20.0.jar /opt/flink/lib/
+COPY ./flink/jars/kafka-avro-serializer-7.5.0.jar /opt/flink/lib/
+COPY ./flink/jars/kafka-clients-3.9.0.jar /opt/flink/lib/
+COPY ./flink/jars/kafka-schema-registry-client-7.5.0.jar /opt/flink/lib/
+COPY ./flink/jars/flink-avro-confluent-registry-1.20.0.jar /opt/flink/lib/
+
+# Copy S3 plugin jar ref: https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/filesystems/plugins/
+RUN mkdir -p /opt/flink/plugins/s3-fs-hadoop/
+COPY ./flink/jars/flink-s3-fs-hadoop-1.20.0.jar /opt/flink/plugins/s3-fs-hadoop/
+
+RUN mkdir -p /opt/flink/usr/ 
+
+COPY ./src/flink/flink_job.py /opt/flink/usr/flink_job.py

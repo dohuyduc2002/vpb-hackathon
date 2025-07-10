@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.secret.name}}
+  namespace: {{ .Values.general.namespace }}
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: {{ .Values.secret.aws_access_key_id }}
+  AWS_SECRET_ACCESS_KEY: {{ .Values.secret.aws_secret_access_key }}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnect
+metadata:
+  name: {{ .Values.kafkaConnect.name }}
+  namespace: {{ .Values.general.namespace }}
+  annotations:
+    strimzi.io/use-connector-resources: "true"
+spec:
+  version: {{ .Values.kafkaConnect.spec.version }}
+  image: {{ .Values.kafkaConnect.spec.image }}
+  replicas: {{ .Values.kafkaConnect.spec.replicas }}
+  bootstrapServers: {{ .Values.kafkaConnect.spec.bootstrapServers }}
+  config:
+    group.id: {{ .Values.kafkaConnect.config.groupId }}
+    offset.storage.topic: {{ .Values.kafkaConnect.config.offsetStorageTopic }}
+    config.storage.topic: {{ .Values.kafkaConnect.config.configStorageTopic }}
+    status.storage.topic: {{ .Values.kafkaConnect.config.statusStorageTopic }}
+    config.storage.replication.factor: {{ .Values.kafkaConnect.config.configStorageReplicationFactor }}
+    offset.storage.replication.factor: {{ .Values.kafkaConnect.config.offsetStorageReplicationFactor }}
+    status.storage.replication.factor: {{ .Values.kafkaConnect.config.statusStorageReplicationFactor }}
+    config.providers: file
+    config.providers.file.class: org.apache.kafka.common.config.provider.FileConfigProvider
+    key.converter: org.apache.kafka.connect.json.JsonConverter
+    value.converter: org.apache.kafka.connect.json.JsonConverter
+    key.converter.schemas.enable: false
+    value.converter.schemas.enable: false
+    plugin.path: /opt/kafka/plugins
+  template:
+    connectContainer:
+      env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secret.name }}
+              key:  {{ .Values.secret.aws_access_key_id }}
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.secret.name }}
+              key: {{ .Values.secret.aws_secret_access_key }}

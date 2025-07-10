@@ -26,6 +26,7 @@ user_schema = {
     "namespace": "com.example",
     "name": "User",
     "fields": [
+        {"name": "idx", "type": "int"},
         {"name": "person", "type": "string"},
         {"name": "current_age", "type": "int"},
         {"name": "retirement_age", "type": "int"},

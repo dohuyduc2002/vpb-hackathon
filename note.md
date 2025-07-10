@@ -58,8 +58,7 @@ helm install \
   --version v1.18.2 \
   --set crds.enabled=true
 
-helm repo add flink-operator-repo https://downloads.apache.org/flink/flink-kubernetes-operator-1.12.0/
-
+helm repo add flink-operator-repo https://downloads.apache.org/flink/flink-kubernetes-operator-1.12.1/
 helm install flink-operator flink-operator-repo/flink-kubernetes-operator \
   --namespace flink \
   --create-namespace
@@ -96,3 +95,13 @@ mc mb localMinio/bronze-layer
 
 
 helm upgrade --install kafka-infra ./kafka -n kafka --create-namespace
+
+
+kubectl logs flink-job-count-fraud-6dbf57677b-4b6fr -n flink --all-containers=true
+
+k describe flinkdeployment flink-job-count-fraud -n flink
+k delete flinkdeployment flink-job-count-fraud
+gcloud compute ssh --zone "us-central1-c" "gke-prediction-platf-primary-node-poo-30449455-rrgv"
+sudo crictl images
+
+sudo crictl rmi 956e5e84864b2 89ddbfed2182f

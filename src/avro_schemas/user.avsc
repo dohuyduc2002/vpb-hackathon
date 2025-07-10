@@ -4,6 +4,10 @@
   "name": "User",
   "fields": [
     {
+      "name": "idx",
+      "type": "int"
+    },
+    {
       "name": "person",
       "type": "string"
     },

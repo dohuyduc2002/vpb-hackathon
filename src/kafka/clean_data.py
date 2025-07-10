@@ -16,6 +16,8 @@ def clean_column_names_and_save(df, save_path):
     df.columns = [to_snake_case(col) for col in df.columns]
     df.to_csv(save_path, index=False)
 
+def add_idx_to_user(df):
+    df.insert(0, "idx", range(len(df)))
 
 def main():
     base_dir = Path(__file__).resolve().parent.parent.parent
@@ -25,6 +27,7 @@ def main():
     card_df = pd.read_csv(data_dir / "sd254_cards.csv")
     transaction_df = pd.read_csv(data_dir / "credit_card_transactions-ibm_v2.csv")
 
+    add_idx_to_user(user_df)
     clean_column_names_and_save(user_df, data_dir / "user_cleaned.csv")
     clean_column_names_and_save(card_df, data_dir / "card_cleaned.csv")
     clean_column_names_and_save(

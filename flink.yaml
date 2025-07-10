@@ -14,7 +14,7 @@ metadata:
   name: flink-job-count-fraud
   namespace: flink
 spec:
-  image: microwave1005/flink_job:0.0.1
+  image: microwave1005/flink-job:0.0.9
   flinkVersion: v1_20
   flinkConfiguration:
     taskmanager.numberOfTaskSlots: "4"
@@ -35,23 +35,23 @@ spec:
             valueFrom:
               secretKeyRef:
                 name: minio-credentials
-                key: access-key
+                key: AWS_ACCESS_KEY_ID
           - name: AWS_SECRET_ACCESS_KEY
             valueFrom:
               secretKeyRef:
                 name: minio-credentials
-                key: secret-key
+                key: AWS_SECRET_ACCESS_KEY
   serviceAccount: flink
   jobManager:
     replicas: 1
     resource:
-      memory: "1g"
+      memory: "2g"
       cpu: 1
     podTemplate:
       spec:
         containers:
           - name: flink-container
-            image: microwave1005/flink_job:0.0.1
+            image: microwave1005/flink-job:0.0.9
             imagePullPolicy: Always  # Add imagePullPolicy for JobManager
             startupProbe:  # Add or modify the startup probe
               httpGet:
@@ -64,18 +64,18 @@ spec:
   taskManager:
     replicas: 1
     resource:
-      memory: "1g"
+      memory: "2g"
       cpu: 1
     podTemplate:
       spec:
         containers:
           - name: flink-container
-            image: microwave1005/flink_job:0.0.1
+            image: microwave1005/flink-job:0.0.9
             imagePullPolicy: Always  # Add imagePullPolicy for JobManager
   job: # ref https://github.com/apache/flink-kubernetes-operator/blob/main/examples/flink-python-example/python-example.yaml
     jarURI: local:///opt/flink/lib/flink-python-1.20.0.jar
     entryClass: "org.apache.flink.client.python.PythonDriver"
-    args: ["-pyclientexec", "/usr/local/bin/python3", "-py", "/opt/flink/usr/merge_streams_avro.py"]
+    args: ["-pyclientexec", "/usr/local/bin/python3", "-py", "/opt/flink/usr/flink_job.py"]
     parallelism: 4
     upgradeMode: savepoint # take snapshot then restart job
     state: running

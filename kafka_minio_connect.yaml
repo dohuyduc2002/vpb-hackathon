@@ -13,12 +13,12 @@ stringData:
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaConnect
 metadata:
-  name: connect-cluster
+  name: minio-connect-cluster
   namespace: kafka
   annotations:
     strimzi.io/use-connector-resources: "true"
 spec:
-  version: 4.0.0
+  version: 3.9.0
   image: microwave1005/kafka-connect-s3:0.0.1
   replicas: 1
   bootstrapServers: kafka-cluster-0-kafka-bootstrap.kafka.svc.cluster.local:9092
@@ -58,7 +58,7 @@ metadata:
   name: minio-sink-connector
   namespace: kafka
   labels:
-    strimzi.io/cluster: connect-cluster
+    strimzi.io/cluster: minio-connect-cluster
 spec:
   class: io.confluent.connect.s3.S3SinkConnector
   tasksMax: 1
