@@ -6,7 +6,7 @@ import torch as th
 import logging
 #from data import parse_edgelist, get_features, read_edges, read_masked_nodes
 import pandas as pd
-
+import lightgbm as lgb
 
 # def get_features(id_to_node, node_features):
 #     """
