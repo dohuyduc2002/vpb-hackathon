@@ -26,7 +26,6 @@ kafkaTopics:
       retention: 604800000
       segmentBytes: 1048576
 
-
 controller:
   name: controller
   replicas: 1

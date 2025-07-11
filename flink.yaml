@@ -14,7 +14,7 @@ metadata:
   name: flink-job-count-fraud
   namespace: flink
 spec:
-  image: microwave1005/flink-job:0.0.9
+  image: microwave1005/flink-job:0.0.1
   flinkVersion: v1_20
   flinkConfiguration:
     taskmanager.numberOfTaskSlots: "4"
@@ -51,7 +51,7 @@ spec:
       spec:
         containers:
           - name: flink-container
-            image: microwave1005/flink-job:0.0.9
+            image: microwave1005/flink-job:0.0.1
             imagePullPolicy: Always  # Add imagePullPolicy for JobManager
             startupProbe:  # Add or modify the startup probe
               httpGet:
@@ -70,7 +70,7 @@ spec:
       spec:
         containers:
           - name: flink-container
-            image: microwave1005/flink-job:0.0.9
+            image: microwave1005/flink-job:0.0.1
             imagePullPolicy: Always  # Add imagePullPolicy for JobManager
   job: # ref https://github.com/apache/flink-kubernetes-operator/blob/main/examples/flink-python-example/python-example.yaml
     jarURI: local:///opt/flink/lib/flink-python-1.20.0.jar

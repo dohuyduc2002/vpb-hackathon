@@ -97,7 +97,7 @@ mc mb localMinio/bronze-layer
 helm upgrade --install kafka-infra ./kafka -n kafka --create-namespace
 
 
-kubectl logs flink-job-count-fraud-6dbf57677b-4b6fr -n flink --all-containers=true
+kubectl logs flink-job-count-fraud-647949677b-sv7g4 -n flink --all-containers=true
 
 k describe flinkdeployment flink-job-count-fraud -n flink
 k delete flinkdeployment flink-job-count-fraud

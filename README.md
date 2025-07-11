@@ -7,7 +7,6 @@ download kaggle data
 kaggle datasets download ealtman2019/credit-card-transactions
 ```
 
-
 docker buildx build --no-cache\
     --platform linux/amd64 \
     -f Dockerfile.kafka_connect \
@@ -16,6 +15,7 @@ docker buildx build --no-cache\
     .
 
 # Install Nginx Ingress Controller
+```bash
 helm install ingress-nginx ingress-nginx/ingress-nginx \
   --namespace ingress-nginx \
   --create-namespace \
@@ -27,18 +27,19 @@ helm install ingress-nginx ingress-nginx/ingress-nginx \
   --set controller.config.proxy-connect-timeout="600" \
   --set controller.config.proxy-send-timeout="600" \
   --set controller.config.proxy-read-timeout="600"
-
+```
 # Install Strimzi Kafka Operator
+```
 helm repo add strimzi https://strimzi.io/charts/
 helm install strimzi strimzi/strimzi-kafka-operator \
   --create-namespace \
   --namespace kafka 
-
+```
 ## Install Kafka infra
-helm upgrade --install kafka-infra ./kafka -n kafka --create-namespace
-# Install Minio
+helm upgrade --install kafka-infra ./helm/kafka -n kafka --create-namespace
+## Install Minio
+```bash
 helm repo add minio https://charts.min.io/
-
 helm upgrade --install minio minio/minio \
   --namespace minio \
   --create-namespace \
@@ -54,6 +55,15 @@ helm upgrade --install minio minio/minio \
   --set consoleIngress.enabled=true \
   --set consoleIngress.ingressClassName=nginx \
   --set consoleIngress.hosts[0]=console.minio.ducdh.com 
+```
+Create minio bucket
+```bash
+mc alias set localMinio http://minio.ducdh.com minio minio123
+mc mb localMinio/bronze-layer
+mc mb localMinio/milvus-bucket
+mc mb localMinio/flink-data
+mc mb localMinio/silver-layer
+```
 
 ## Instal flink jar
 ```bash
@@ -72,17 +82,29 @@ wget https://repo1.maven.org/maven2/org/apache/flink/flink-avro-confluent-regist
 wget https://packages.confluent.io/maven/io/confluent/kafka-schema-registry-client/7.5.0/kafka-schema-registry-client-7.5.0.jar
 wget https://packages.confluent.io/maven/io/confluent/kafka-avro-serializer/7.5.0/kafka-avro-serializer-7.5.0.jar
 ```
+## Cert Manager
+```bash
+helm repo add jetstack https://charts.jetstack.io 
+helm install \
+  cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --create-namespace \
+  --version v1.18.2 \
+  --set crds.enabled=true
+```
 
-mc alias set localMinio http://minio.ducdh.com minio minio123
-mc mb localMinio/bronze-layer
-mc mb localMinio/milvus-bucket
-mc mb localMinio/flink-data
-mc mb localMinio/silver-layer
+## Flink Operator
+```bash
+helm repo add flink-operator-repo https://downloads.apache.org/flink/flink-kubernetes-operator-1.12.1/
+helm install flink-operator flink-operator-repo/flink-kubernetes-operator \
+  --namespace flink \
+  --create-namespace
+```
 
 # Milvus 
 ```bash
 helm repo add milvus https://zilliztech.github.io/milvus-helm/
-helm install milvus milvus/milvus \
+helm upgrade --install milvus milvus/milvus \
   --namespace milvus \
   --create-namespace \
   --set image.all.tag=v2.6.0-rc1 \
@@ -100,12 +122,40 @@ helm install milvus milvus/milvus \
   --set streaming.enabled=true \
   --set ingress.enabled=true \
   --set ingress.ingressClassName=nginx \
-  --set standalone.persistentVolumeClaim.size=5Gi \
+  --set ingress.host[1]=milvus.ducdh.com \
+  --set standalone.persistence.persistentVolumeClaim.size=5Gi \
   --set attu.enabled=true \
   --set attu.ingress.enabled=true \
   --set attu.ingress.ingressClassName=nginx \
+  --set attu.ingress.host[1]=attu.milvus.ducdh.com \
   --set pulsarv3.enabled=false
-
-
-
-
+```
+## Clickhouse
+```bash
+helm repo add hyperdx https://hyperdxio.github.io/helm-charts
+helm upgrade --install clickhouse hyperdx/hdx-oss-v2 \
+  --namespace clickhouse \
+  --create-namespace \
+  --set hyperdx.ingress.enabled=true \
+  --set hyperdx.ingress.host=clickhouse.ducdh.com \
+  --set clickhouse.persistence.dataSize=5Gi \
+  --set clickhouse.persistence.logSize=1Gi \
+  --set clickhouse.persistence.storageClass=standard-rwo \
+  --set mongodb.persistence.dataSize=1Gi \
+  --set global.storageClassName=standard-rwo 
+```
+## Airflow
+```bash
+helm upgrade --install airflow apache-airflow/airflow \
+ --namespace airflow \
+ --create-namespace \
+ --set flower.enabled=true \
+ --set workers.persistence.size=5Gi \
+ --set triggerer.persistence.size=5Gi \
+ --set ingress.web.enabled=true \
+ --set ingress.web.hosts[0]=airflow.ducdh.com \
+ --set ingress.web.ingressClassName=nginx \
+ --set ingress.flower.enabled=true \
+ --set ingress.flower.hosts[0]=flower.ducdh.com \
+ --set ingress.flower.ingressClassName=nginx 
+```

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from schema import transaction_schema, user_schema, card_schema
+from avro_schema import transaction_schema, user_schema, card_schema
 
 
 def main():

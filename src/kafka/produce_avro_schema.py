@@ -15,7 +15,7 @@ def produce_to_kafka(csv_name, avro_name, topic, chunksize=None):
         schema_str = f.read()
 
     # Schema Registry config
-    schema_registry_conf = {"url": "http://34.172.236.120:8081"}
+    schema_registry_conf = {"url": "http://34.59.250.15:8081"}
     schema_registry_client = SchemaRegistryClient(schema_registry_conf)
     avro_serializer = AvroSerializer(
         schema_registry_client,
@@ -24,7 +24,7 @@ def produce_to_kafka(csv_name, avro_name, topic, chunksize=None):
 
     # Producer config
     producer_conf = {
-        "bootstrap.servers": "35.192.41.150:9094",
+        "bootstrap.servers": "34.172.236.120:9094",
         "key.serializer": StringSerializer("utf_8"),
         "value.serializer": avro_serializer,
         "queue.buffering.max.messages": 100000,
@@ -88,3 +88,4 @@ if __name__ == "__main__":
     produce_to_kafka(
         csv_name="card_cleaned.csv", avro_name="card.avsc", topic="card-topic"
     )
+# datastream api nhận msg từ kafka qua connector -> gửi sang api để predict
