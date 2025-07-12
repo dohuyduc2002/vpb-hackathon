@@ -3,6 +3,7 @@ transaction_schema = {
     "namespace": "com.example",
     "name": "Transaction",
     "fields": [
+        {"name": "idx", "type": "int"},
         {"name": "user", "type": "long"},
         {"name": "card", "type": "long"},
         {"name": "year", "type": "int"},
@@ -54,6 +55,7 @@ card_schema = {
     "namespace": "com.example",
     "name": "Card",
     "fields": [
+        {"name": "idx", "type": "int"},
         {"name": "user", "type": "long"},
         {"name": "card_index", "type": "long"},
         {"name": "card_brand", "type": "string"},

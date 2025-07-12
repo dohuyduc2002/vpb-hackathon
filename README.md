@@ -1,21 +1,46 @@
 # vpb-hackathon
+This readme will demonstrate how to set up a real-time fraud detection system using Kafka, Flink, Milvus, ClickHouse, and MinIO on a EKS cluster. The system will process credit card transactions in real-time, detect fraudulent activities, and store the data for further analysis.
 
-download kaggle data
-
+## Install EKS cluster
+Firstly, login to your AWS account through AWS CLI, ensure that your IAM account got these permission 
+```bash
+AmazonEKSClusterPolicy
+AmazonEKS_CNI_Policy
+AmazonEKSDashboardConsoleReadOnly
+AmazonEKSComputePolicy
+AmazonEKSBlockStoragePolicy
+AmazonEBSCSIDriverPolicy
 ```
+
+After that navigate to `terraform` directory to provision EKS cluster, this will provision EKS cluster with full acess to S3 and EC2.
+
+## Download data
+Firstly you have to download data from kaggle with kaggle cli, be sure to login with your kaggle account
+```bash
 #!/bin/bash
 kaggle datasets download ealtman2019/credit-card-transactions
 ```
+I'm also cleaning data to standardize the data before produce it to streaming, you can find the code in `src/streaming/clean_data.py`
 
-docker buildx build --no-cache\
-    --platform linux/amd64 \
+## Build docker images
+1. Kafka connect image
+```bash
+docker build --no-cache\
     -f Dockerfile.kafka_connect \
-    -t microwave1005/kafka-connect-s3:0.0.1 \
+    -t microwave1005/kafka-connect-s3:0.0.2 \
     --push \
     .
-
-# Install Nginx Ingress Controller
+```
+2. API image
 ```bash
+
+```
+
+## Instalation
+Be sure to following this order to install all components correctly, you can run this script to install all components
+### Install Nginx Ingress Controller
+```bash
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 helm install ingress-nginx ingress-nginx/ingress-nginx \
   --namespace ingress-nginx \
   --create-namespace \
@@ -28,16 +53,25 @@ helm install ingress-nginx ingress-nginx/ingress-nginx \
   --set controller.config.proxy-send-timeout="600" \
   --set controller.config.proxy-read-timeout="600"
 ```
-# Install Strimzi Kafka Operator
+
+After Nginx controller got external IP, modify the `/etc/hosts` file to point the domain to the external IP of Nginx controller
+```bash
+
+34.132.171.2 dbeaver.ducdh.com kafka.ducdh.com milvus-example.local milvus-attu.local minio.ducdh.com console.minio.ducdh.com
 ```
+
+### Install Strimzi Kafka Operator
+```bash
 helm repo add strimzi https://strimzi.io/charts/
 helm install strimzi strimzi/strimzi-kafka-operator \
   --create-namespace \
   --namespace kafka 
 ```
-## Install Kafka infra
+### Install Kafka infra
+```bash
 helm upgrade --install kafka-infra ./helm/kafka -n kafka --create-namespace
-## Install Minio
+```
+### Install Minio
 ```bash
 helm repo add minio https://charts.min.io/
 helm upgrade --install minio minio/minio \
@@ -59,49 +93,113 @@ helm upgrade --install minio minio/minio \
 Create minio bucket
 ```bash
 mc alias set localMinio http://minio.ducdh.com minio minio123
-mc mb localMinio/bronze-layer
+mc mb localMinio/stream-bucket
 mc mb localMinio/milvus-bucket
 mc mb localMinio/flink-data
-mc mb localMinio/silver-layer
 ```
 
-## Instal flink jar
+After these steps, produce streaming data to kafka topics with this command, this will produce roughly 26 million records to transaction topic, 6000 records to card topic and 2000 record to user topic, so it will take a while to finish, you can check the progress in Kafka UI. **You can continue to the next step while waiting for this command to finish.**
 ```bash
-wget https://repo1.maven.org/maven2/org/apache/flink/flink-python/1.20.0/flink-python-1.20.0.jar
-wget https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.9.0/kafka-clients-3.9.0.jar
-wget https://repo1.maven.org/maven2/org/apache/flink/flink-streaming-java_2.12/1.20.0/flink-streaming-java_2.12-1.20.0.jar
-wget https://repo1.maven.org/maven2/org/apache/flink/flink-table-api-java-bridge_2.12/1.20.0/flink-table-api-java-bridge_2.12-1.20.0.jar
-wget https://repo1.maven.org/maven2/org/apache/flink/flink-java/1.20.0/flink-java-1.20.0.jar
-wget https://repo1.maven.org/maven2/org/apache/flink/flink-connector-kafka/3.4.0-1.20/flink-connector-kafka-3.4.0-1.20.jar
-wget https://repo1.maven.org/maven2/org/apache/avro/avro/1.12.0/avro-1.12.0.jar
-wget https://repo1.maven.org/maven2/org/apache/flink/flink-avro/1.20.0/flink-avro-1.20.0.jar
-wget https://repo1.maven.org/maven2/org/apache/flink/flink-parquet/1.20.0/flink-parquet-1.20.0.jar
-wget https://repo1.maven.org/maven2/org/apache/flink/flink-s3-fs-hadoop/1.20.0/flink-s3-fs-hadoop-1.20.0.jar
-wget https://repo1.maven.org/maven2/org/apache/flink/flink-avro-confluent-registry/1.20.0/flink-avro-confluent-registry-1.20.0.jar
-
-wget https://packages.confluent.io/maven/io/confluent/kafka-schema-registry-client/7.5.0/kafka-schema-registry-client-7.5.0.jar
-wget https://packages.confluent.io/maven/io/confluent/kafka-avro-serializer/7.5.0/kafka-avro-serializer-7.5.0.jar
+bash ./scripts/produce_data.sh
 ```
-## Cert Manager
+
+### Clickhouse
 ```bash
-helm repo add jetstack https://charts.jetstack.io 
-helm install \
-  cert-manager jetstack/cert-manager \
-  --namespace cert-manager \
-  --create-namespace \
-  --version v1.18.2 \
-  --set crds.enabled=true
+k create namespace clickhouse
+# After namespace is created, you can install ClickHouse Operator this script
+bash ./clickhouse/install.sh
+# After ClickHouse Operator is installed, you can install ClickHouse cluster with this command
+k apply -f clickhouse/clickhouse.yaml
 ```
 
-## Flink Operator
+### DBeaver
 ```bash
-helm repo add flink-operator-repo https://downloads.apache.org/flink/flink-kubernetes-operator-1.12.1/
-helm install flink-operator flink-operator-repo/flink-kubernetes-operator \
-  --namespace flink \
-  --create-namespace
+helm upgrade --install dbeaver ./helm/dbeaver -n clickhouse 
+```
+After installing DBeaver and create user, connect to ClickHouse with the provided credentials in `clickhouse/clickhouse.yaml` to create these tables in ClickHouse for Kafka Connect to consume data from Kafka topics and write to ClickHouse.
+1. card_topic table
+```sql
+CREATE TABLE card_topic
+(
+    idx Int32,
+    user Int64,
+    card_index Int64,
+    card_brand String,
+    card_type String,
+    card_number Int64,
+    expires String,
+    cvv Int32,
+    has_chip String,
+    cards_issued Int64,
+    credit_limit String,
+    acct_open_date String,
+    year_pin_last_changed Int32,
+    card_on_dark_web String
+)
+ENGINE = MergeTree()
+ORDER BY idx;
+```
+2. user_topic table
+```sql
+CREATE TABLE user_topic
+(
+    idx                         Int32,
+    person                      String,
+    current_age                 Int32,
+    retirement_age              Int32,
+    birth_year                  Int32,
+    birth_month                 Int32,
+    gender                      String,
+    address                     String,
+    apartment                   Nullable(Float64),
+    city                        String,
+    state                       String,
+    zipcode                     Int32,
+    latitude                    Float64,
+    longitude                   Float64,
+    per_capita_income__zipcode  String,
+    yearly_income__person       String,
+    total_debt                  String,
+    fico_score                  Int32,
+    num_credit_cards            Int32
+)
+ENGINE = MergeTree
+ORDER BY idx;
+
 ```
 
-# Milvus 
+3. transaction_topic table
+```sql
+CREATE TABLE transaction_topic
+(
+    idx             Int32,
+    user            Int64,
+    card            Int64,
+    year            Int32,
+    month           Int32,
+    day             Int32,
+    time            String,
+    amount          String,
+    use_chip        Nullable(String),
+    merchant_name   Nullable(Int64),
+    merchant_city   Nullable(String),
+    merchant_state  Nullable(String),
+    zip             Nullable(Float64),
+    mcc             Int32,
+    errors          Nullable(String),
+    is_fraud        String
+)
+ENGINE = MergeTree
+ORDER BY idx;
+```
+
+### Install Kafka Connect and Kafka Connector
+```bash
+k apply -f kafka/
+```
+This will create a Kafka Connect cluster and Kafka Connectors to consume data from Kafka topics and write to ClickHouse, MinIO. 
+
+### Milvus 
 ```bash
 helm repo add milvus https://zilliztech.github.io/milvus-helm/
 helm upgrade --install milvus milvus/milvus \
@@ -122,29 +220,14 @@ helm upgrade --install milvus milvus/milvus \
   --set streaming.enabled=true \
   --set ingress.enabled=true \
   --set ingress.ingressClassName=nginx \
-  --set ingress.host[1]=milvus.ducdh.com \
   --set standalone.persistence.persistentVolumeClaim.size=5Gi \
   --set attu.enabled=true \
   --set attu.ingress.enabled=true \
   --set attu.ingress.ingressClassName=nginx \
-  --set attu.ingress.host[1]=attu.milvus.ducdh.com \
   --set pulsarv3.enabled=false
 ```
-## Clickhouse
-```bash
-helm repo add hyperdx https://hyperdxio.github.io/helm-charts
-helm upgrade --install clickhouse hyperdx/hdx-oss-v2 \
-  --namespace clickhouse \
-  --create-namespace \
-  --set hyperdx.ingress.enabled=true \
-  --set hyperdx.ingress.host=clickhouse.ducdh.com \
-  --set clickhouse.persistence.dataSize=5Gi \
-  --set clickhouse.persistence.logSize=1Gi \
-  --set clickhouse.persistence.storageClass=standard-rwo \
-  --set mongodb.persistence.dataSize=1Gi \
-  --set global.storageClassName=standard-rwo 
-```
-## Airflow
+
+### Airflow
 ```bash
 helm upgrade --install airflow apache-airflow/airflow \
  --namespace airflow \
@@ -154,8 +237,13 @@ helm upgrade --install airflow apache-airflow/airflow \
  --set triggerer.persistence.size=5Gi \
  --set ingress.web.enabled=true \
  --set ingress.web.hosts[0]=airflow.ducdh.com \
- --set ingress.web.ingressClassName=nginx \
- --set ingress.flower.enabled=true \
- --set ingress.flower.hosts[0]=flower.ducdh.com \
- --set ingress.flower.ingressClassName=nginx 
+ --set ingress.web.ingressClassName=nginx
 ```
+
+
+
+kcat -b 34.172.236.120:9094 \
+     -t user-topic \
+     -r http://34.59.250.15:8081 \
+     -s value=avro \
+     -C -c 5

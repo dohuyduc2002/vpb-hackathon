@@ -1,0 +1,10 @@
+FROM python:3.11.11-slim
+
+RUN pip install --no-cache-dir fastapi[all] scikit-learn requests clickhouse-driver slack_sdk
+
+WORKDIR /app
+COPY ./src/client ./client
+
+EXPOSE 8000
+
+CMD ["uvicorn", "client.api:app", "--host", "0.0.0.0", "--port", "8000"]

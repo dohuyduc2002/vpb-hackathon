@@ -5,14 +5,14 @@ kafkaClusterName: kafka-cluster-0
 
 kafkaTopics:
   - name: transaction-topic
-    partitions: 3
+    partitions: 4
     replicas: 1
     config:
       cleanupPolicy: delete
       retention: 604800000
       segmentBytes: 1048576
   - name: user-topic
-    partitions: 3
+    partitions: 2
     replicas: 1
     config:
       cleanupPolicy: delete
@@ -48,8 +48,6 @@ kafka:
   listeners:
     plain:
       port: 9092
-    tls: # remove later
-      port: 9093
     external:
       port: 9094
   config:
@@ -89,36 +87,3 @@ schemaRegistry:
   svcName: schema-registry-svc
   ingressName: schema-registry-ingress
   ingressClass: nginx
-
-kafkaConnect:
-  name: minio-connect-cluster
-  spec:
-    version: 3.9.0
-    replicas: 1
-    image: microwave1005/kafka-connect-s3:0.0.1
-    bootstrapServers: kafka-cluster-0-kafka-bootstrap.kafka.svc.cluster.local:9092
-  config:
-    groupId: connect-cluster
-    offsetStorageTopic: connect-offsets
-    configStorageTopic: connect-configs
-    statusStorageTopic: connect-status
-    configStorageReplicationFactor: 1
-    offsetStorageReplicationFactor: 1
-    statusStorageReplicationFactor: 1
-
-kafkaConnector:
-  name: minio-sink-connector
-  config:
-    tasksMax: 1
-    topics: "transaction-topic"
-    s3BucketName: "bronze-layer"
-    storeUrl: http://minio.minio.svc.cluster.local:9000
-    s3PartSize: 5242880
-    s3FlushSize: 4000000
-    schemaRegistryUrl: http://schema-registry-svc:8081
-
-secret:
-  name: minio-credentials
-  data:
-    aws_access_key_id: minio
-    aws_secret_access_key: minio123

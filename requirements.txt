@@ -11,3 +11,6 @@ pydantic==2.10.3
 openai==1.94.0
 minio==7.2.15
 pymilvus==2.5.12
+fastapi==0.116.1
+starlette==0.47.1
+slack_sdk==3.36.0

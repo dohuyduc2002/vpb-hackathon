@@ -53,14 +53,10 @@ spec:
     listeners:
       - name: plain
         port: {{ .Values.kafka.listeners.plain.port }}
-        type: internal # maybe change to cluster ip 
+        type: internal 
         tls: false
         configuration:
           useServiceDnsDomain: true
-      - name: tls # remove later
-        port: {{ .Values.kafka.listeners.tls.port }}
-        type: internal
-        tls: true
       - name: external
         port: {{ .Values.kafka.listeners.external.port }}
         type: loadbalancer

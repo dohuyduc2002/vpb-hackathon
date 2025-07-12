@@ -4,24 +4,29 @@ from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroSerializer
 from confluent_kafka.serialization import StringSerializer
 from confluent_kafka import SerializingProducer
+import math
 
+def clean_record(record):
+    for k, v in record.items():
+        if isinstance(v, float) and math.isnan(v):
+            record[k] = None
+        elif isinstance(v, str) and v.strip().lower() in {"nan", "", "na"}:
+            record[k] = None
+        elif pd.isna(v):
+            record[k] = None
+    return record
 
-def produce_to_kafka(csv_name, avro_name, topic, chunksize=None):
+def get_avro_producer(avro_name):
     base_dir = Path(__file__).resolve().parent.parent.parent
-    data_dir = base_dir / "data"
     avro_dir = base_dir / "src" / "avro_schemas"
-
     with open(avro_dir / avro_name, "r") as f:
         schema_str = f.read()
-
-    # Schema Registry config
     schema_registry_conf = {"url": "http://34.59.250.15:8081"}
     schema_registry_client = SchemaRegistryClient(schema_registry_conf)
     avro_serializer = AvroSerializer(
         schema_registry_client,
         schema_str,
     )
-
     # Producer config
     producer_conf = {
         "bootstrap.servers": "34.172.236.120:9094",
@@ -34,58 +39,54 @@ def produce_to_kafka(csv_name, avro_name, topic, chunksize=None):
         "retries": 5,
         "retry.backoff.ms": 1000,
     }
-    producer = SerializingProducer(producer_conf)
+    return SerializingProducer(producer_conf)
 
-    if chunksize:  
-        total = 0
-        for chunk in pd.read_csv(data_dir / csv_name, chunksize=chunksize):
-            for _, row in chunk.iterrows():
-                record = row.to_dict()
-                for k, v in record.items():
-                    if pd.isna(v):
-                        record[k] = None
-                delivered = False
-                while not delivered:
-                    try:
-                        producer.produce(
-                            topic=topic, key=str(record.get("user")), value=record
-                        )
-                        producer.poll(0)
-                        delivered = True
-                    except BufferError:
-                        print("Queue full, waiting...")
-                        producer.poll(1)
-                    except Exception as e:
-                        print(f"Error: {e}")
-                        break
-            producer.flush()
-            total += len(chunk)
-            print(f"Produced {total} records so far...")
-    else:  
-        df = pd.read_csv(data_dir / csv_name)
-        for _, row in df.iterrows():
-            record = row.to_dict()
-            for k, v in record.items():
-                if pd.isna(v):
-                    record[k] = None
-                producer.produce(topic=topic, key=str(record.get("User")), value=record)
+def produce_user():
+    base_dir = Path(__file__).resolve().parent.parent.parent
+    data_dir = base_dir / "data"
+    producer = get_avro_producer("user.avsc")
+    df = pd.read_csv(data_dir / "user_cleaned.csv")
+    for _, row in df.iterrows():
+        record = clean_record(row.to_dict())
+        producer.produce(topic="user-topic", key=str(record.get("idx")), value=record)
+    producer.flush()
+    print(f"Produced {len(df)} user records.")
+
+def produce_card():
+    base_dir = Path(__file__).resolve().parent.parent.parent
+    data_dir = base_dir / "data"
+    producer = get_avro_producer("card.avsc")
+    df = pd.read_csv(data_dir / "card_cleaned.csv")
+    for _, row in df.iterrows():
+        record = clean_record(row.to_dict())
+        producer.produce(topic="card-topic", key=str(record.get("user")), value=record)
+    producer.flush()
+    print(f"Produced {len(df)} card records.")
+
+def produce_transaction(chunksize=10000):
+    base_dir = Path(__file__).resolve().parent.parent.parent
+    data_dir = base_dir / "data"
+    producer = get_avro_producer("transaction.avsc")
+    total = 0
+    for chunk in pd.read_csv(data_dir / "transaction_cleaned.csv", chunksize=chunksize):
+        for _, row in chunk.iterrows():
+            record = clean_record(row.to_dict())
+            delivered = False
+            while not delivered:
+                try:
+                    producer.produce(
+                        topic="transaction-topic", key=str(record.get("user")), value=record
+                    )
+                    producer.poll(0)
+                    delivered = True
+                except BufferError:
+                    print("Queue full, waiting...")
+                    producer.poll(1)
         producer.flush()
-        print(f"Produced {len(df)} records.")
-
+        total += len(chunk)
+        print(f"Produced {total} transaction records so far...")
 
 if __name__ == "__main__":
-    produce_to_kafka(
-        csv_name="transaction_cleaned.csv",
-        avro_name="transaction.avsc",
-        topic="transaction-topic",
-        chunksize=10000,  
-    )
-
-    produce_to_kafka(
-        csv_name="user_cleaned.csv", avro_name="user.avsc", topic="user-topic"
-    )
-
-    produce_to_kafka(
-        csv_name="card_cleaned.csv", avro_name="card.avsc", topic="card-topic"
-    )
-# datastream api nhận msg từ kafka qua connector -> gửi sang api để predict
+    produce_transaction()
+    produce_user()
+    produce_card()

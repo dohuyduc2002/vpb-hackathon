@@ -4,6 +4,10 @@
   "name": "Transaction",
   "fields": [
     {
+      "name": "idx",
+      "type": "int"
+    },
+    {
       "name": "user",
       "type": "long"
     },

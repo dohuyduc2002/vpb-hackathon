@@ -1,31 +1,43 @@
-from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType
+from pymilvus import (
+    connections,
+    Collection,
+    FieldSchema,
+    CollectionSchema,
+    DataType,
+    utility,
+)
 
-MILVUS_HOST = "localhost"  # hoặc endpoint Milvus thật
+MILVUS_HOST = "127.0.0.1"  # Due to milvus ingress use gRPC, using k port-forward svc/milvus 19530:19530
 MILVUS_PORT = "19530"
-COLLECTION_NAME = "transaction_embedding"  # Đây chính là MILVUS_COLLECTION
+
+# Định nghĩa thông tin cho từng collection
+COLLECTIONS = [
+    {"name": "user_embedding", "desc": "User embedding collection"},
+    {"name": "card_embedding", "desc": "Card embedding collection"},
+    {"name": "transaction_embedding", "desc": "Transaction embedding collection"},
+]
+
+EMBEDDING_DIM = 1536
 
 
-def create_milvus_collection():
+def create_collection_if_not_exists(collection_name, description, embedding_dim):
     connections.connect("default", host=MILVUS_HOST, port=MILVUS_PORT)
 
-    # Kiểm tra collection đã tồn tại chưa
-    if COLLECTION_NAME in [c.name for c in Collection.list()]:
-        print(f"Collection {COLLECTION_NAME} đã tồn tại.")
+    if collection_name in utility.list_collections():
+        print(f"Collection '{collection_name}' đã tồn tại.")
         return
 
-    # Định nghĩa schema
     fields = [
         FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
-        FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=1536),
+        FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=embedding_dim),
         FieldSchema(name="raw_text", dtype=DataType.VARCHAR, max_length=65535),
-        # Bạn có thể thêm các field metadata khác nếu cần (vd: timestamp, transaction_id...)
     ]
-    schema = CollectionSchema(fields, description="Transaction embedding collection")
+    schema = CollectionSchema(fields, description=description)
 
-    # Tạo collection
-    collection = Collection(COLLECTION_NAME, schema)
-    print(f"Đã tạo collection {COLLECTION_NAME} thành công!")
+    collection = Collection(collection_name, schema)
+    print(f"Đã tạo collection '{collection_name}' thành công!")
 
 
 if __name__ == "__main__":
-    create_milvus_collection()
+    for col in COLLECTIONS:
+        create_collection_if_not_exists(col["name"], col["desc"], EMBEDDING_DIM)

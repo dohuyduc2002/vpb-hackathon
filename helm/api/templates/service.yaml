@@ -1,17 +1,13 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Values.service.name }}
-  namespace: {{ .Values.service.namespace }}
-  labels:
-    app: {{ .Values.service.name }}
+  name: {{ .Values.name }}
+  namespace: {{ .Values.namespace }}
 spec:
   selector:
-    app: {{ .Values.service.name }}
+    app: {{ .Values.name }}
   ports:
-    - port: {{ .Values.service.ports.http }}
-      targetPort: {{ .Values.service.ports.http }}
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
       name: http
-    - port: {{ .Values.service.ports.metrics }}
-      targetPort: {{ .Values.service.ports.metrics }}
-      name: metrics

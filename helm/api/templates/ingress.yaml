@@ -1,9 +1,9 @@
-{{- if and .Values.ingress.enabled .Values.ingress.rules }}
+{{- if .Values.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ .Values.service.name }}-ingress
-  namespace: {{ .Values.service.namespace }}
+  name: {{ .Values.name }}-ingress
+  namespace: {{ .Values.namespace }}
   annotations:
     {{- range $k, $v := .Values.ingress.annotations }}
     {{ $k }}: {{ $v | quote }}
@@ -11,18 +11,14 @@ metadata:
 spec:
   ingressClassName: {{ .Values.ingress.ingressClassName }}
   rules:
-    {{- range .Values.ingress.rules }}
-    - host: {{ .host }}
+    - host: {{ .Values.ingress.host }}
       http:
         paths:
-          {{- range .paths }}
-          - path: {{ .path }}
-            pathType: {{ .pathType }}
+          - path: /
+            pathType: Prefix
             backend:
               service:
-                name: {{ .serviceName }}
+                name: {{ .Values.name }}
                 port:
-                  number: {{ .servicePort }}
-          {{- end }}
-    {{- end }}
+                  number: 8000
 {{- end }}
