@@ -1,619 +1,435 @@
 import os
-import sys
-curPath = os.path.abspath(os.path.dirname(__file__))
-sys.path.append(curPath)
-
-os.environ['DGLBACKEND'] = 'pytorch'
-
-import torch as th
-import dgl
-import numpy as np
 import pandas as pd
-import time
+import numpy as np
+import xgboost as xgb
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix, precision_recall_curve, auc
 import pickle
-import copy
-import joblib
+import argparse
+from collections import defaultdict
 import warnings
 warnings.filterwarnings('ignore')
 
-from sklearn.metrics import confusion_matrix, roc_auc_score, precision_recall_curve, average_precision_score
-from sklearn.ensemble import VotingClassifier
-from sklearn.model_selection import train_test_split
-import xgboost as xgb
 
-from gnn.estimator_fns import *
-from gnn.graph_utils import *
-from gnn.data import *
-from gnn.utils import *
-from gnn.pytorch_model import *
-
-
-class HybridFraudDetector:
+def calculate_pr_auc_with_thresholds(y_true, y_pred_proba, thresholds=[0.5, 0.6, 0.7, 0.8]):
     """
-    Hybrid model combining HeteroRGCN and XGBoost for fraud detection
+    Calculate PR AUC and metrics at different probability thresholds
+    
+    Args:
+        y_true: True binary labels
+        y_pred_proba: Predicted probabilities
+        thresholds: List of probability thresholds to evaluate
+        
+    Returns:
+        Dictionary with PR AUC and threshold-specific metrics
+    """
+    # Calculate overall PR AUC
+    precision, recall, _ = precision_recall_curve(y_true, y_pred_proba)
+    pr_auc = auc(recall, precision)
+    
+    # Calculate metrics at specific thresholds
+    threshold_metrics = {}
+    
+    for threshold in thresholds:
+        y_pred_thresh = (y_pred_proba >= threshold).astype(int)
+        
+        # Calculate precision, recall, and F1 at this threshold
+        from sklearn.metrics import precision_score, recall_score, f1_score
+        
+        prec = precision_score(y_true, y_pred_thresh, zero_division=0)
+        rec = recall_score(y_true, y_pred_thresh, zero_division=0)
+        f1 = f1_score(y_true, y_pred_thresh, zero_division=0)
+        
+        # Count predictions
+        total_positive_pred = sum(y_pred_thresh)
+        total_actual_positive = sum(y_true)
+        
+        threshold_metrics[threshold] = {
+            'precision': prec,
+            'recall': rec,
+            'f1_score': f1,
+            'predicted_positive': total_positive_pred,
+            'actual_positive': total_actual_positive,
+            'prediction_rate': total_positive_pred / len(y_pred_thresh)
+        }
+    
+    return {
+        'pr_auc': pr_auc,
+        'threshold_metrics': threshold_metrics
+    }
+
+
+class SimplifiedHybridFraudDetector:
+    """
+    Simplified hybrid fraud detector using XGBoost with graph-inspired features
     """
     
-    def __init__(self, 
-                 ntype_dict, 
-                 etypes, 
-                 gnn_config, 
-                 xgb_config=None,
-                 ensemble_weights=None,
-                 device='cpu'):
-        """
-        Initialize the hybrid model
-        
-        Args:
-            ntype_dict: Dictionary of node types and their counts
-            etypes: List of edge types
-            gnn_config: Configuration for GNN model
-            xgb_config: Configuration for XGBoost model
-            ensemble_weights: Weights for ensemble voting
-            device: Device for GNN training
-        """
-        self.device = device
-        self.ntype_dict = ntype_dict
-        self.etypes = etypes
-        self.gnn_config = gnn_config
-        self.xgb_config = xgb_config or self._default_xgb_config()
-        self.ensemble_weights = ensemble_weights or [0.6, 0.4]  # [GNN, XGB]
-        
-        # Initialize models
-        self.gnn_model = None
+    def __init__(self, random_state=42):
+        self.random_state = random_state
         self.xgb_model = None
-        self.feature_scaler = None
-        self.is_trained = False
+        self.feature_scaler = StandardScaler()
+        self.feature_names = None
+        self.trained = False
         
-    def _default_xgb_config(self):
-        """Default XGBoost configuration optimized for fraud detection"""
-        return {
+    def create_graph_features(self, df):
+        """
+        Create graph-inspired features from transaction data
+        """
+        user_features = df.groupby('User_ID').agg({
+            'Amount': ['count', 'mean', 'std', 'min', 'max'],
+            'Is_Fraud': 'mean',
+            'Hour': lambda x: x.value_counts().index[0],  # Most common hour
+            'MCC': 'nunique'  # Number of different merchant categories
+        }).fillna(0)
+        
+        user_features.columns = ['_'.join(col).strip() for col in user_features.columns]
+
+        merchant_features = df.groupby('Merchant_ID').agg({
+            'Amount': ['count', 'mean', 'std'],
+            'Is_Fraud': 'mean',
+            'User_ID': 'nunique'  # Number of different users
+        }).fillna(0)
+        
+        merchant_features.columns = ['merchant_' + '_'.join(col).strip() for col in merchant_features.columns]
+        
+        enhanced_df = df.copy()
+        enhanced_df = enhanced_df.merge(user_features, left_on='User_ID', right_index=True, how='left')
+        enhanced_df = enhanced_df.merge(merchant_features, left_on='Merchant_ID', right_index=True, how='left')
+        
+        enhanced_df['amount_vs_user_avg'] = enhanced_df['Amount'] / (enhanced_df['Amount_mean'] + 1e-6)
+        enhanced_df['amount_vs_merchant_avg'] = enhanced_df['Amount'] / (enhanced_df['merchant_Amount_mean'] + 1e-6)
+        enhanced_df['user_fraud_risk'] = enhanced_df['Is_Fraud_mean']
+        enhanced_df['merchant_fraud_risk'] = enhanced_df['merchant_Is_Fraud_mean']
+        enhanced_df['is_weekend'] = enhanced_df['Day_of_Week'].isin([0, 6]).astype(int)
+        enhanced_df['is_night'] = ((enhanced_df['Hour'] < 6) | (enhanced_df['Hour'] > 22)).astype(int)
+        enhanced_df['high_amount'] = (enhanced_df['Amount'] > enhanced_df['Amount'].quantile(0.95)).astype(int)
+        
+        return enhanced_df
+    
+    def prepare_features(self, df):
+        """
+        Prepare features for training
+        """
+        # Base features
+        feature_columns = [
+            'Amount', 'Hour', 'Day_of_Week', 'Year', 'Use_Chip_Binary', 'MCC',
+            'Amount_count', 'Amount_mean', 'Amount_std', 'Amount_min', 'Amount_max',
+            'Is_Fraud_mean', 'Hour_<lambda>', 'MCC_nunique',
+            'merchant_Amount_count', 'merchant_Amount_mean', 'merchant_Amount_std',
+            'merchant_Is_Fraud_mean', 'merchant_User_ID_nunique',
+            'amount_vs_user_avg', 'amount_vs_merchant_avg', 'user_fraud_risk',
+            'merchant_fraud_risk', 'is_weekend', 'is_night', 'high_amount'
+        ]
+        
+        # Select available features
+        available_features = [col for col in feature_columns if col in df.columns]
+        X = df[available_features].fillna(0)
+        
+        # Store feature names
+        if self.feature_names is None:
+            self.feature_names = X.columns.tolist()
+        
+        return X
+    
+    def train(self, df, test_size=0.2):
+        """
+        Train the simplified hybrid model
+        """
+        print("="*60)
+        print("TRAINING SIMPLIFIED HYBRID FRAUD DETECTION MODEL")
+        print("="*60)
+        enhanced_df = self.create_graph_features(df)
+        X = self.prepare_features(enhanced_df)
+        y = enhanced_df['Is_Fraud'].values
+        
+        print(f"Feature matrix shape: {X.shape}")
+        print(f"Fraud rate: {y.mean():.3f}")
+        
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=self.random_state, stratify=y
+        )
+
+        X_train_scaled = self.feature_scaler.fit_transform(X_train)
+        X_test_scaled = self.feature_scaler.transform(X_test)
+        scale_pos_weight = (len(y_train) - y_train.sum()) / y_train.sum()
+        
+        xgb_params = {
             'objective': 'binary:logistic',
             'eval_metric': 'auc',
             'max_depth': 6,
             'learning_rate': 0.1,
-            'n_estimators': 100,
+            'n_estimators': 200,
             'subsample': 0.8,
             'colsample_bytree': 0.8,
             'reg_alpha': 0.1,
             'reg_lambda': 1.0,
-            'scale_pos_weight': 3.0,  # Handle class imbalance
-            'random_state': 42,
-            'n_jobs': -1
+            'scale_pos_weight': scale_pos_weight,
+            'random_state': self.random_state
         }
-    
-    def _initialize_gnn(self, in_feats, n_classes):
-        """Initialize the HeteroRGCN model"""
-        self.gnn_model = HeteroRGCN(
-            self.ntype_dict, 
-            self.etypes, 
-            in_feats, 
-            self.gnn_config['n_hidden'], 
-            n_classes, 
-            self.gnn_config['n_layers'], 
-            in_feats
-        ).to(self.device)
         
-    def _initialize_xgb(self):
-        """Initialize the XGBoost model"""
-        self.xgb_model = xgb.XGBClassifier(**self.xgb_config)
+        print(f"Training XGBoost with {X_train.shape[1]} features...")
         
-    def extract_graph_embeddings(self, g, features):
-        """
-        Extract node embeddings from trained GNN model
+        # Train XGBoost
+        self.xgb_model = xgb.XGBClassifier(**xgb_params)
         
-        Args:
-            g: DGL graph
-            features: Node features
-            
-        Returns:
-            Graph embeddings for target nodes
-        """
-        if self.gnn_model is None:
-            raise ValueError("GNN model not trained yet")
-            
-        self.gnn_model.eval()
-        with th.no_grad():
-            # Get embeddings from the second-to-last layer
-            h_dict = {ntype: emb for ntype, emb in self.gnn_model.embed.items()}
-            h_dict['target'] = features.to(self.device)
-            
-            # Forward pass through all layers except the last
-            for i, layer in enumerate(self.gnn_model.layers[:-1]):
-                if i != 0:
-                    h_dict = {k: F.leaky_relu(h) for k, h in h_dict.items()}
-                h_dict = layer(g, h_dict)
-                
-            # Return target node embeddings
-            return h_dict['target'].cpu().numpy()
-    
-    def prepare_tabular_features(self, features, graph_embeddings, additional_features=None):
-        """
-        Prepare combined features for XGBoost training
-        
-        Args:
-            features: Original node features
-            graph_embeddings: Graph embeddings from GNN
-            additional_features: Additional tabular features (optional)
-            
-        Returns:
-            Combined feature matrix
-        """
-        feature_list = [features.cpu().numpy(), graph_embeddings]
-        
-        if additional_features is not None:
-            feature_list.append(additional_features)
-            
-        combined_features = np.concatenate(feature_list, axis=1)
-        
-        # Normalize features if scaler exists
-        if self.feature_scaler is not None:
-            combined_features = self.feature_scaler.transform(combined_features)
-        else:
-            from sklearn.preprocessing import StandardScaler
-            self.feature_scaler = StandardScaler()
-            combined_features = self.feature_scaler.fit_transform(combined_features)
-            
-        return combined_features
-    
-    def train_gnn(self, g, features, labels, train_mask, test_mask, n_epochs=100):
-        """
-        Train the HeteroRGCN model
-        
-        Args:
-            g: DGL graph
-            features: Node features
-            labels: Node labels
-            train_mask: Training mask
-            test_mask: Test mask
-            n_epochs: Number of training epochs
-            
-        Returns:
-            Training history
-        """
-        print("Training HeteroRGCN model...")
-        
-        # Initialize GNN model
-        in_feats = features.shape[1]
-        n_classes = 2
-        self._initialize_gnn(in_feats, n_classes)
-        
-        # Setup training
-        optimizer = th.optim.Adam(self.gnn_model.parameters(), 
-                                 lr=self.gnn_config.get('lr', 0.01),
-                                 weight_decay=self.gnn_config.get('weight_decay', 5e-4))
-        loss_fn = th.nn.CrossEntropyLoss()
-        
-        # Training loop
-        best_f1 = 0
-        best_model_state = None
-        history = {'loss': [], 'f1': [], 'auc': []}
-        
-        features = features.to(self.device)
-        labels = labels.to(self.device)
-        
-        for epoch in range(n_epochs):
-            self.gnn_model.train()
-            
-            # Forward pass
-            logits = self.gnn_model(g, features)
-            loss = loss_fn(logits[train_mask.bool()], labels[train_mask.bool()])
-            
-            # Backward pass
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            
-            # Evaluation
-            if epoch % 10 == 0:
-                metrics = self._evaluate_gnn(g, features, labels, test_mask)
-                history['loss'].append(loss.item())
-                history['f1'].append(metrics['f1'])
-                history['auc'].append(metrics['auc'])
-                
-                print(f"Epoch {epoch:04d} | Loss: {loss.item():.4f} | "
-                      f"F1: {metrics['f1']:.4f} | AUC: {metrics['auc']:.4f}")
-                
-                if metrics['f1'] > best_f1:
-                    best_f1 = metrics['f1']
-                    best_model_state = copy.deepcopy(self.gnn_model.state_dict())
-        
-        # Load best model
-        if best_model_state is not None:
-            self.gnn_model.load_state_dict(best_model_state)
-            
-        print(f"GNN training completed. Best F1: {best_f1:.4f}")
-        return history
-    
-    def train_xgb(self, g, features, labels, train_mask, test_mask, additional_features=None):
-        """
-        Train the XGBoost model using combined features
-        
-        Args:
-            g: DGL graph
-            features: Node features
-            labels: Node labels
-            train_mask: Training mask
-            test_mask: Test mask
-            additional_features: Additional tabular features
-            
-        Returns:
-            Training metrics
-        """
-        print("Training XGBoost model...")
-        
-        # Extract graph embeddings
-        graph_embeddings = self.extract_graph_embeddings(g, features)
-        
-        # Prepare combined features
-        combined_features = self.prepare_tabular_features(features, graph_embeddings, additional_features)
-        
-        # Split data
-        X_train = combined_features[train_mask.bool().numpy()]
-        X_test = combined_features[test_mask.bool().numpy()]
-        y_train = labels[train_mask.bool()].numpy()
-        y_test = labels[test_mask.bool()].numpy()
-        
-        # Initialize and train XGBoost
-        self._initialize_xgb()
-        
-        # Train with early stopping
-        eval_set = [(X_train, y_train), (X_test, y_test)]
-        self.xgb_model.fit(
-            X_train, y_train,
-            eval_set=eval_set,
-            eval_names=['train', 'test'],
-            early_stopping_rounds=10,
-            verbose=False
-        )
+        # Fit with early stopping using callbacks for newer XGBoost versions
+        try:
+            self.xgb_model.fit(
+                X_train_scaled, y_train,
+                eval_set=[(X_test_scaled, y_test)],
+                callbacks=[xgb.callback.EarlyStopping(rounds=20, save_best=True)],
+                verbose=False
+            )
+        except TypeError:
+            # Fallback for older XGBoost versions
+            self.xgb_model.fit(
+                X_train_scaled, y_train,
+                eval_set=[(X_test_scaled, y_test)],
+                verbose=False
+            )
         
         # Evaluate
-        train_proba = self.xgb_model.predict_proba(X_train)[:, 1]
-        test_proba = self.xgb_model.predict_proba(X_test)[:, 1]
+        train_pred = self.xgb_model.predict(X_train_scaled)
+        train_pred_proba = self.xgb_model.predict_proba(X_train_scaled)[:, 1]
         
-        train_auc = roc_auc_score(y_train, train_proba)
-        test_auc = roc_auc_score(y_test, test_proba)
+        test_pred = self.xgb_model.predict(X_test_scaled)
+        test_pred_proba = self.xgb_model.predict_proba(X_test_scaled)[:, 1]
         
-        print(f"XGBoost training completed. Train AUC: {train_auc:.4f}, Test AUC: {test_auc:.4f}")
+        # Print results
+        print("\n" + "="*50)
+        print("TRAINING RESULTS")
+        print("="*50)
+        
+        train_auc = roc_auc_score(y_train, train_pred_proba)
+        test_auc = roc_auc_score(y_test, test_pred_proba)
+        
+        print(f"Train AUC: {train_auc:.4f}")
+        print(f"Test AUC: {test_auc:.4f}")
+        
+        # Calculate PR AUC with thresholds
+        print("\n" + "="*50)
+        print("PR AUC AND THRESHOLD ANALYSIS")
+        print("="*50)
+        
+        train_pr_results = calculate_pr_auc_with_thresholds(y_train, train_pred_proba)
+        test_pr_results = calculate_pr_auc_with_thresholds(y_test, test_pred_proba)
+        
+        print(f"Train PR AUC: {train_pr_results['pr_auc']:.4f}")
+        print(f"Test PR AUC: {test_pr_results['pr_auc']:.4f}")
+        
+        print("\nThreshold Analysis (Test Set):")
+        print("Threshold | Precision | Recall | F1-Score | Pred+ | Rate  ")
+        print("-" * 60)
+        
+        for threshold in [0.5, 0.6, 0.7, 0.8]:
+            metrics = test_pr_results['threshold_metrics'][threshold]
+            print(f"   {threshold:.1f}    |   {metrics['precision']:.3f}   | {metrics['recall']:.3f} |  {metrics['f1_score']:.3f}  | {metrics['predicted_positive']:4d} | {metrics['prediction_rate']:.3f}")
+        
+        print("\nTest Set Classification Report:")
+        print(classification_report(y_test, test_pred))
+        
+        print("\nTest Set Confusion Matrix:")
+        print(confusion_matrix(y_test, test_pred))
+        
+        # Feature importance
+        print("\nTop 10 Feature Importances:")
+        feature_importance = sorted(
+            zip(self.feature_names, self.xgb_model.feature_importances_),
+            key=lambda x: x[1], reverse=True
+        )[:10]
+        
+        for feature, importance in feature_importance:
+            print(f"  {feature}: {importance:.4f}")
+        
+        self.trained = True
         
         return {
             'train_auc': train_auc,
             'test_auc': test_auc,
-            'feature_importance': self.xgb_model.feature_importances_
+            'train_pr_auc': train_pr_results['pr_auc'],
+            'test_pr_auc': test_pr_results['pr_auc'],
+            'threshold_metrics': test_pr_results['threshold_metrics'],
+            'feature_importance': feature_importance
         }
     
-    def train_hybrid(self, g, features, labels, train_mask, test_mask, 
-                    additional_features=None, gnn_epochs=100):
+    def predict(self, df):
         """
-        Train the complete hybrid model
-        
-        Args:
-            g: DGL graph
-            features: Node features
-            labels: Node labels
-            train_mask: Training mask
-            test_mask: Test mask
-            additional_features: Additional tabular features
-            gnn_epochs: Number of GNN training epochs
-            
-        Returns:
-            Training results
+        Make predictions on new data
         """
-        print("Starting Hybrid Model Training...")
+        if not self.trained:
+            raise ValueError("Model must be trained before making predictions")
         
-        # Step 1: Train GNN
-        gnn_history = self.train_gnn(g, features, labels, train_mask, test_mask, gnn_epochs)
+        # Create graph-inspired features
+        enhanced_df = self.create_graph_features(df)
         
-        # Step 2: Train XGBoost
-        xgb_metrics = self.train_xgb(g, features, labels, train_mask, test_mask, additional_features)
+        # Prepare features
+        X = self.prepare_features(enhanced_df)
+        X_scaled = self.feature_scaler.transform(X)
         
-        # Step 3: Evaluate hybrid model
-        hybrid_metrics = self.evaluate_hybrid(g, features, labels, test_mask, additional_features)
+        # Predict
+        predictions = self.xgb_model.predict_proba(X_scaled)[:, 1]
+        binary_predictions = self.xgb_model.predict(X_scaled)
         
-        self.is_trained = True
-        print("Hybrid model training completed!")
-        
-        return {
-            'gnn_history': gnn_history,
-            'xgb_metrics': xgb_metrics,
-            'hybrid_metrics': hybrid_metrics
-        }
-    
-    def predict_hybrid(self, g, features, additional_features=None):
-        """
-        Make hybrid predictions combining GNN and XGBoost
-        
-        Args:
-            g: DGL graph
-            features: Node features
-            additional_features: Additional tabular features
-            
-        Returns:
-            Hybrid predictions and probabilities
-        """
-        if not self.is_trained:
-            raise ValueError("Model not trained yet")
-        
-        # GNN predictions
-        self.gnn_model.eval()
-        with th.no_grad():
-            gnn_logits = self.gnn_model(g, features.to(self.device))
-            gnn_proba = th.softmax(gnn_logits, dim=-1)[:, 1].cpu().numpy()
-        
-        # XGBoost predictions
-        graph_embeddings = self.extract_graph_embeddings(g, features)
-        combined_features = self.prepare_tabular_features(features, graph_embeddings, additional_features)
-        xgb_proba = self.xgb_model.predict_proba(combined_features)[:, 1]
-        
-        # Ensemble predictions
-        hybrid_proba = (self.ensemble_weights[0] * gnn_proba + 
-                       self.ensemble_weights[1] * xgb_proba)
-        hybrid_pred = (hybrid_proba > 0.5).astype(int)
-        
-        return {
-            'predictions': hybrid_pred,
-            'probabilities': hybrid_proba,
-            'gnn_proba': gnn_proba,
-            'xgb_proba': xgb_proba
-        }
-    
-    def evaluate_hybrid(self, g, features, labels, test_mask, additional_features=None):
-        """
-        Evaluate the hybrid model
-        
-        Args:
-            g: DGL graph
-            features: Node features
-            labels: Node labels
-            test_mask: Test mask
-            additional_features: Additional tabular features
-            
-        Returns:
-            Evaluation metrics
-        """
-        predictions = self.predict_hybrid(g, features, additional_features)
-        
-        # Get test data
-        y_test = labels[test_mask.bool()].numpy()
-        y_pred = predictions['predictions'][test_mask.bool().numpy()]
-        y_proba = predictions['probabilities'][test_mask.bool().numpy()]
-        
-        # Calculate metrics
-        auc = roc_auc_score(y_test, y_proba)
-        precision, recall, _ = precision_recall_curve(y_test, y_proba)
-        ap = average_precision_score(y_test, y_proba)
-        
-        # F1 score
-        tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
-        precision_score = tp / (tp + fp) if (tp + fp) > 0 else 0
-        recall_score = tp / (tp + fn) if (tp + fn) > 0 else 0
-        f1 = 2 * (precision_score * recall_score) / (precision_score + recall_score) if (precision_score + recall_score) > 0 else 0
-        
-        return {
-            'auc': auc,
-            'f1': f1,
-            'precision': precision_score,
-            'recall': recall_score,
-            'ap': ap
-        }
-    
-    def _evaluate_gnn(self, g, features, labels, test_mask):
-        """Evaluate GNN model"""
-        self.gnn_model.eval()
-        with th.no_grad():
-            logits = self.gnn_model(g, features)
-            proba = th.softmax(logits, dim=-1)[:, 1]
-            pred = logits.argmax(dim=1)
-            
-            # Test metrics
-            y_test = labels[test_mask.bool()]
-            y_pred = pred[test_mask.bool()]
-            y_proba = proba[test_mask.bool()]
-            
-            auc = roc_auc_score(y_test.cpu().numpy(), y_proba.cpu().numpy())
-            
-            # F1 score
-            tn, fp, fn, tp = confusion_matrix(y_test.cpu().numpy(), y_pred.cpu().numpy()).ravel()
-            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-            recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-            f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-            
-            return {'auc': auc, 'f1': f1, 'precision': precision, 'recall': recall}
+        return predictions, binary_predictions
     
     def save_model(self, model_dir):
         """
-        Save the hybrid model
-        
-        Args:
-            model_dir: Directory to save models
+        Save the trained model
         """
-        if not os.path.exists(model_dir):
-            os.makedirs(model_dir)
-        
-        # Save GNN model
-        th.save(self.gnn_model.state_dict(), os.path.join(model_dir, 'gnn_model.pth'))
+        os.makedirs(model_dir, exist_ok=True)
         
         # Save XGBoost model
-        joblib.dump(self.xgb_model, os.path.join(model_dir, 'xgb_model.pkl'))
+        self.xgb_model.save_model(os.path.join(model_dir, 'xgb_model.json'))
         
-        if self.feature_scaler is not None:
-            joblib.dump(self.feature_scaler, os.path.join(model_dir, 'feature_scaler.pkl'))
-        
-        config = {
-            'ntype_dict': self.ntype_dict,
-            'etypes': self.etypes,
-            'gnn_config': self.gnn_config,
-            'xgb_config': self.xgb_config,
-            'ensemble_weights': self.ensemble_weights
+        # Save other components
+        model_data = {
+            'feature_scaler': self.feature_scaler,
+            'feature_names': self.feature_names,
+            'trained': self.trained,
+            'random_state': self.random_state
         }
         
-        with open(os.path.join(model_dir, 'hybrid_config.pkl'), 'wb') as f:
-            pickle.dump(config, f)
+        with open(os.path.join(model_dir, 'model_components.pkl'), 'wb') as f:
+            pickle.dump(model_data, f)
         
-        print(f"Hybrid model saved to {model_dir}")
+        print(f"Model saved to {model_dir}")
     
     def load_model(self, model_dir):
         """
-        Load the hybrid model
-        
-        Args:
-            model_dir: Directory containing saved models
+        Load a trained model
         """
-        # Load configuration
-        with open(os.path.join(model_dir, 'hybrid_config.pkl'), 'rb') as f:
-            config = pickle.load(f)
-        
-        self.ntype_dict = config['ntype_dict']
-        self.etypes = config['etypes']
-        self.gnn_config = config['gnn_config']
-        self.xgb_config = config['xgb_config']
-        self.ensemble_weights = config['ensemble_weights']
-        
-        # Load GNN model
-        in_feats = self.gnn_config.get('in_feats', 64)  # Default value
-        self._initialize_gnn(in_feats, 2)
-        self.gnn_model.load_state_dict(th.load(os.path.join(model_dir, 'gnn_model.pth')))
-        
         # Load XGBoost model
-        self.xgb_model = joblib.load(os.path.join(model_dir, 'xgb_model.pkl'))
+        self.xgb_model = xgb.XGBClassifier()
+        self.xgb_model.load_model(os.path.join(model_dir, 'xgb_model.json'))
         
-        # Load feature scaler
-        scaler_path = os.path.join(model_dir, 'feature_scaler.pkl')
-        if os.path.exists(scaler_path):
-            self.feature_scaler = joblib.load(scaler_path)
+        # Load other components
+        with open(os.path.join(model_dir, 'model_components.pkl'), 'rb') as f:
+            model_data = pickle.load(f)
         
-        self.is_trained = True
-        print(f"Hybrid model loaded from {model_dir}")
+        self.feature_scaler = model_data['feature_scaler']
+        self.feature_names = model_data['feature_names']
+        self.trained = model_data['trained']
+        self.random_state = model_data['random_state']
+        
+        print(f"Model loaded from {model_dir}")
+
+
+def load_and_preprocess_encoded_csv(csv_path, max_samples=500000):
+    """
+    Load and preprocess the encoded CSV data
+    """
+    print(f"Loading data from {csv_path}...")
+    
+    df = pd.read_csv(csv_path)
+    
+    # Drop unnamed columns if they exist
+    if 'Unnamed: 0' in df.columns:
+        df.drop(columns=['Unnamed: 0'], inplace=True)
+    
+    print(f"Loaded {len(df)} transactions")
+    
+    # Sample data if too large to avoid memory issues
+    if len(df) > max_samples:
+        print(f"Dataset too large ({len(df)} rows). Sampling {max_samples} transactions...")
+        # Stratified sampling to maintain fraud ratio
+        fraud_df = df[df['Is Fraud?'] == 1]
+        normal_df = df[df['Is Fraud?'] == 0]
+        
+        fraud_ratio = len(fraud_df) / len(df)
+        fraud_samples = min(len(fraud_df), int(max_samples * fraud_ratio))
+        normal_samples = max_samples - fraud_samples
+        
+        sampled_fraud = fraud_df.sample(n=fraud_samples, random_state=42)
+        sampled_normal = normal_df.sample(n=normal_samples, random_state=42)
+        
+        df = pd.concat([sampled_fraud, sampled_normal]).sample(frac=1, random_state=42).reset_index(drop=True)
+        print(f"Sampled {len(df)} transactions (fraud rate: {df['Is Fraud?'].mean():.3f})")
+    
+    print(f"Final dataset: {len(df)} transactions")
+    print(f"Columns: {list(df.columns)}")
+    print(f"Fraud rate: {df['Is Fraud?'].mean():.3f}")
+    
+    # Rename columns for consistency
+    df = df.rename(columns={'Is Fraud?': 'Is_Fraud'})
+    
+    # Create synthetic user IDs (since not provided)
+    np.random.seed(42)
+    n_users = min(1000, len(df) // 5)
+    df['User_ID'] = np.random.randint(0, n_users, len(df))
+    
+    # Create merchant IDs from Merchant Name
+    merchant_encoder = LabelEncoder()
+    df['Merchant_ID'] = merchant_encoder.fit_transform(df['Merchant Name'].astype(str))
+    
+    # Extract Use Chip information
+    if 'Use Chip_0' in df.columns and 'Use Chip_1' in df.columns:
+        # Convert one-hot encoding back to single column
+        df['Use_Chip_Binary'] = 0  # Default to Swipe
+        df.loc[df['Use Chip_1'] == 1, 'Use_Chip_Binary'] = 1  # Chip
+        # Note: Online would be 2, but not present in this encoding
+    else:
+        df['Use_Chip_Binary'] = 0  # Default value
+    
+    # Extract Day of Week information
+    if 'Day of Week_0' in df.columns:
+        df['Day_of_Week'] = 0
+        for i in range(3):  # 0, 1, 2
+            col = f'Day of Week_{i}'
+            if col in df.columns:
+                df.loc[df[col] == 1, 'Day_of_Week'] = i
+    else:
+        df['Day_of_Week'] = 1  # Default value
+    
+    print(f"Processed data:")
+    print(f"  - Users: {df['User_ID'].nunique()}")
+    print(f"  - Merchants: {df['Merchant_ID'].nunique()}")
+    print(f"  - Transactions: {len(df)}")
+    
+    return df
 
 
 def main():
     """
-    Main training function
+    Main function for simplified training
     """
-    print('Starting Hybrid Fraud Detection Training...')
-    print(f'numpy version: {np.__version__}')
-    print(f'PyTorch version: {th.__version__}')
-    print(f'DGL version: {dgl.__version__}')
-    print(f'XGBoost version: {xgb.__version__}')
+    parser = argparse.ArgumentParser(description='Train simplified hybrid fraud detection model')
+    parser.add_argument('--csv_path', type=str, default='./data.csv',
+                       help='Path to encoded CSV file')
+    parser.add_argument('--model_dir', type=str, default='./simple_hybrid_model',
+                       help='Directory to save trained model')
+    parser.add_argument('--test_size', type=float, default=0.2,
+                       help='Test set fraction')
+    parser.add_argument('--max_samples', type=int, default=500000,
+                       help='Maximum number of samples to use for training')
     
-    args = parse_args()
-    print(args)
+    args = parser.parse_args()
     
-    # Construct graph
-    args.edges = get_edgelists('relation*', args.training_dir)
-    g, features, target_id_to_node, id_to_node = construct_graph(
-        args.training_dir,
-        args.edges, 
-        args.nodes,
-        args.target_ntype
-    )
+    if not os.path.exists(args.csv_path):
+        print(f"Error: CSV file not found: {args.csv_path}")
+        return
     
-    # Normalize features
-    mean, stdev, features = normalize(th.from_numpy(features))
-    g.nodes['target'].data['features'] = features
-    
-    # Get labels
-    print("Getting labels...")
-    n_nodes = g.number_of_nodes('target')
-    labels, train_mask, test_mask = get_labels(
-        target_id_to_node,
-        n_nodes,
-        args.target_ntype,
-        os.path.join(args.training_dir, args.labels),
-        os.path.join(args.training_dir, args.new_accounts)
-    )
-    
-    labels = th.from_numpy(labels).long()
-    train_mask = th.from_numpy(train_mask).bool()
-    test_mask = th.from_numpy(test_mask).bool()
-    
-    print(f"""
-    ---- Data Statistics ----
-    #Nodes: {sum([g.number_of_nodes(ntype) for ntype in g.ntypes])}
-    #Edges: {sum([g.number_of_edges(etype) for etype in g.etypes])}
-    #Features Shape: {features.shape}
-    #Training samples: {train_mask.sum()}
-    #Test samples: {test_mask.sum()}
-    """)
-    
-    device = th.device('cuda:0' if args.num_gpus and th.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
-    
-    # Model configuration
-    ntype_dict = {ntype: g.number_of_nodes(ntype) for ntype in g.ntypes}
-    gnn_config = {
-        'n_hidden': args.n_hidden,
-        'n_layers': args.n_layers,
-        'lr': args.lr,
-        'weight_decay': args.weight_decay,
-        'in_feats': features.shape[1]
-    }
-    
-    # XGBoost configuration (optimized for fraud detection)
-    xgb_config = {
-        'objective': 'binary:logistic',
-        'eval_metric': 'auc',
-        'max_depth': 6,
-        'learning_rate': 0.1,
-        'n_estimators': 200,
-        'subsample': 0.8,
-        'colsample_bytree': 0.8,
-        'reg_alpha': 0.1,
-        'reg_lambda': 1.0,
-        'scale_pos_weight': 5.0,  # Adjust based on class imbalance
-        'random_state': 42
-    }
-    
-    # Initialize hybrid model
-    hybrid_model = HybridFraudDetector(
-        ntype_dict=ntype_dict,
-        etypes=g.etypes,
-        gnn_config=gnn_config,
-        xgb_config=xgb_config,
-        ensemble_weights=[0.6, 0.4],  # GNN gets higher weight
-        device=device
-    )
-    
-    # Train the hybrid model
-    print("\n" + "="*50)
-    print("Starting Hybrid Training")
-    print("="*50)
-    
-    training_results = hybrid_model.train_hybrid(
-        g=g,
-        features=features,
-        labels=labels,
-        train_mask=train_mask,
-        test_mask=test_mask,
-        gnn_epochs=args.n_epochs
-    )
-    
-    print("\n" + "="*50)
-    print("FINAL RESULTS")
-    print("="*50)
-    print(f"Hybrid Model - AUC: {training_results['hybrid_metrics']['auc']:.4f}")
-    print(f"Hybrid Model - F1: {training_results['hybrid_metrics']['f1']:.4f}")
-    print(f"Hybrid Model - Precision: {training_results['hybrid_metrics']['precision']:.4f}")
-    print(f"Hybrid Model - Recall: {training_results['hybrid_metrics']['recall']:.4f}")
-    print(f"Hybrid Model - AP: {training_results['hybrid_metrics']['ap']:.4f}")
-    
-    if not os.path.exists(args.model_dir):
-        os.makedirs(args.model_dir)
-    
-    hybrid_model.save_model(args.model_dir)
-    
-    metadata = {
-        'feature_mean': mean,
-        'feature_std': stdev,
-        'id_to_node': id_to_node,
-        'target_id_to_node': target_id_to_node,
-        'training_results': training_results
-    }
-    
-    with open(os.path.join(args.model_dir, 'training_metadata.pkl'), 'wb') as f:
-        pickle.dump(metadata, f)
-    
-    print(f"Model and metadata saved to {args.model_dir}")
-    print("Training completed successfully!")
+    try:
+        # Load and preprocess data
+        df = load_and_preprocess_encoded_csv(args.csv_path, max_samples=args.max_samples)
+        
+        # Initialize and train model
+        model = SimplifiedHybridFraudDetector()
+        results = model.train(df, test_size=args.test_size)
+        
+        # Save model
+        model.save_model(args.model_dir)
+        
+        print(f"Final Test AUC: {results['test_auc']:.4f}")
+        print(f"Final Test PR AUC: {results['test_pr_auc']:.4f}")
+        print("\nPerformance at Different Thresholds:")
+        for threshold in [0.5, 0.6, 0.7, 0.8]:
+            metrics = results['threshold_metrics'][threshold]
+            print(f"  Threshold {threshold}: Precision={metrics['precision']:.3f}, Recall={metrics['recall']:.3f}, F1={metrics['f1_score']:.3f}")
+    except Exception as e:
+        print(f"Training failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == '__main__':
