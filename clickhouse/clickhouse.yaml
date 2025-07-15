@@ -18,7 +18,7 @@ spec:
         templates:
           podTemplate: pod-template-with-volumes
         layout:
-          shardsCount: 2
+          shardsCount: 1
           replicasCount: 1
 
   templates:
@@ -41,11 +41,11 @@ spec:
             - ReadWriteOnce
           resources:
             requests:
-              storage: 5Gi
+              storage: 10Gi
       - name: log-storage-vc-template
         spec:
           accessModes:
             - ReadWriteOnce
           resources:
             requests:
-              storage: 2Gi
+              storage: 5Gi

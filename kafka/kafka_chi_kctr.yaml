@@ -10,9 +10,9 @@ spec:
   class: com.clickhouse.kafka.connect.ClickHouseSinkConnector
   tasksMax: 1
   config:
-    topics: "clickhouse-topic"
-    topic2TableMap: clickhouse-topic=clickhouse_topic
-    hostname: clickhouse-ch-cluster.clickhouse.svc.cluster.local
+    topics: "transaction-topic"
+    topic2TableMap: transaction-topic=transaction_topic
+    hostname: chi-stream-chi-cluster-0-0.clickhouse.svc.cluster.local
     port: 8123
     database: default
     username: ducdh
@@ -21,6 +21,7 @@ spec:
     value.converter: "io.confluent.connect.avro.AvroConverter"
     value.converter.schema.registry.url: "http://schema-registry-svc:8081"
     value.converter.schemas.enable: "true"
+    flush.size: 1000
 ---
 # 2. Sink user-topic to ClickHouse
 apiVersion: kafka.strimzi.io/v1beta2
@@ -36,7 +37,7 @@ spec:
   config:
     topics: "user-topic"
     topic2TableMap: user-topic=user_topic
-    hostname: clickhouse-ch-cluster.clickhouse.svc.cluster.local
+    hostname: chi-stream-chi-cluster-0-0.clickhouse.svc.cluster.local
     port: 8123
     database: default
     username: ducdh
@@ -45,7 +46,7 @@ spec:
     value.converter: "io.confluent.connect.avro.AvroConverter"
     value.converter.schema.registry.url: "http://schema-registry-svc:8081"
     value.converter.schemas.enable: "true"
-
+    flush.size: 1000
 ---
 # 2. Sink card-topic to ClickHouse
 apiVersion: kafka.strimzi.io/v1beta2
@@ -61,7 +62,7 @@ spec:
   config:
     topics: "card-topic"
     topic2TableMap: card-topic=card_topic
-    hostname: clickhouse-ch-cluster.clickhouse.svc.cluster.local
+    hostname: chi-stream-chi-cluster-0-0.clickhouse.svc.cluster.local
     port: 8123
     database: default
     username: ducdh
@@ -70,3 +71,5 @@ spec:
     value.converter: "io.confluent.connect.avro.AvroConverter"
     value.converter.schema.registry.url: "http://schema-registry-svc:8081"
     value.converter.schemas.enable: "true"
+    flush.size: 1000
+

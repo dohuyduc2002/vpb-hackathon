@@ -2,18 +2,21 @@
 This readme will demonstrate how to set up a real-time fraud detection system using Kafka, Flink, Milvus, ClickHouse, and MinIO on a EKS cluster. The system will process credit card transactions in real-time, detect fraudulent activities, and store the data for further analysis.
 
 ## Install EKS cluster
-Firstly, login to your AWS account through AWS CLI, ensure that your IAM account got these permission 
+Firstly, login to your AWS account through AWS CLI, for POC, I'm using `AdministratorAccess` policy. After that navigate to `terraform` directory to provision EKS cluster, this will provision EKS cluster with full acess to S3 and EC2.
+
 ```bash
-AmazonEKSClusterPolicy
-AmazonEKS_CNI_Policy
-AmazonEKSDashboardConsoleReadOnly
-AmazonEKSComputePolicy
-AmazonEKSBlockStoragePolicy
-AmazonEBSCSIDriverPolicy
+cd terraform
+terraform init
+terraform apply
 ```
-
-After that navigate to `terraform` directory to provision EKS cluster, this will provision EKS cluster with full acess to S3 and EC2.
-
+After the EKS cluster is created, add context to your kubeconfig file to access the EKS cluster with kubectl
+```bash
+aws eks update-kubeconfig --region us-east-1 --name eks-fsds
+```
+You also need to crate storage class EBS GP3 for other components to use
+```bash
+kubectl apply -f ebs-sc.yaml
+```
 ## Download data
 Firstly you have to download data from kaggle with kaggle cli, be sure to login with your kaggle account
 ```bash
@@ -27,13 +30,26 @@ I'm also cleaning data to standardize the data before produce it to streaming, y
 ```bash
 docker build --no-cache\
     -f Dockerfile.kafka_connect \
-    -t microwave1005/kafka-connect-s3:0.0.2 \
+    -t microwave1005/kafka-connect-s3:0.0.1 \
     --push \
     .
 ```
 2. API image
 ```bash
+docker build --no-cache \
+    -f Dockerfile.api \
+    -t microwave1005/model-api:0.0.1 \
+    --push \
+    .
+```
 
+3. Airflow image
+```bash
+docker build --no-cache \
+    -f Dockerfile.airflow \
+    -t microwave1005/airflow-custom:0.0.3 \
+    --push \
+    .
 ```
 
 ## Instalation
@@ -54,12 +70,13 @@ helm install ingress-nginx ingress-nginx/ingress-nginx \
   --set controller.config.proxy-read-timeout="600"
 ```
 
-After Nginx controller got external IP, modify the `/etc/hosts` file to point the domain to the external IP of Nginx controller
+After Nginx controller got external IP, modify the `/etc/hosts` file to point the domain to the external IP of Nginx controller, you can get the external IP with this command
 ```bash
+nslookup a9ff37ef161dc4f5f99791ea5eebafb7-691184424.us-east-1.elb.amazonaws.com
 
-34.132.171.2 dbeaver.ducdh.com kafka.ducdh.com milvus-example.local milvus-attu.local minio.ducdh.com console.minio.ducdh.com
+3.217.98.32 dbeaver.ducdh.com kafka.ducdh.com milvus-example.local milvus-attu.local minio.ducdh.com console.minio.ducdh.com
+
 ```
-
 ### Install Strimzi Kafka Operator
 ```bash
 helm repo add strimzi https://strimzi.io/charts/
@@ -97,10 +114,10 @@ mc mb localMinio/stream-bucket
 mc mb localMinio/milvus-bucket
 mc mb localMinio/flink-data
 ```
-
 After these steps, produce streaming data to kafka topics with this command, this will produce roughly 26 million records to transaction topic, 6000 records to card topic and 2000 record to user topic, so it will take a while to finish, you can check the progress in Kafka UI. **You can continue to the next step while waiting for this command to finish.**
 ```bash
-bash ./scripts/produce_data.sh
+cd src/producer
+bash run.sh
 ```
 
 ### Clickhouse
@@ -192,7 +209,10 @@ CREATE TABLE transaction_topic
 ENGINE = MergeTree
 ORDER BY idx;
 ```
+4. fraud table (for airflow etl job)
+```sql
 
+```
 ### Install Kafka Connect and Kafka Connector
 ```bash
 k apply -f kafka/
@@ -229,18 +249,28 @@ helm upgrade --install milvus milvus/milvus \
 
 ### Airflow
 ```bash
+helm repo add apache-airflow https://airflow.apache.org
 helm upgrade --install airflow apache-airflow/airflow \
- --namespace airflow \
- --create-namespace \
- --set flower.enabled=true \
- --set workers.persistence.size=5Gi \
- --set triggerer.persistence.size=5Gi \
- --set ingress.web.enabled=true \
- --set ingress.web.hosts[0]=airflow.ducdh.com \
- --set ingress.web.ingressClassName=nginx
+  --version 1.16.0 \
+  --namespace airflow \
+  --create-namespace \
+  --set defaultAirflowRepository=microwave1005/airflow-custom \
+  --set defaultAirflowTag=0.0.6 \
+  --set airflowVersion=2.10.0 \
+  --set workers.persistence.size=5Gi \
+  --set triggerer.persistence.size=5Gi \
+  --set ingress.web.enabled=true \
+  --set ingress.web.hosts[0]=airflow.ducdh.com \
+  --set ingress.web.ingressClassName=nginx
 ```
+k port-forward svc/airflow-api-server 8080:8080
+kubectl delete all --all -n airflow --grace-period=0 --force
 
-
+docker build --no-cache \
+    -f Dockerfile.airflow \
+    -t microwave1005/airflow-custom:0.0.6 \
+    --push \
+    .
 
 kcat -b 34.172.236.120:9094 \
      -t user-topic \

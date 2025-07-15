@@ -1,0 +1,10 @@
+avro-python3==1.10.2
+pandas==2.3.0
+fastavro==1.11.1
+cachetools==6.1.0
+authlib==1.6.0
+minio==7.2.15
+pymilvus==2.5.12
+slack_sdk==3.36.0
+clickhouse_connect==0.8.18
+apache-airflow==3.0.2

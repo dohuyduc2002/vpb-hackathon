@@ -7,7 +7,7 @@ from pymilvus import (
     utility,
 )
 
-MILVUS_HOST = "127.0.0.1"  # Due to milvus ingress use gRPC, using k port-forward svc/milvus 19530:19530
+MILVUS_HOST = "127.0.0.1"  # Due to milvus ingress use gRPC, using k port-forward svc/milvus -n milvus 19530:19530
 MILVUS_PORT = "19530"
 
 # Định nghĩa thông tin cho từng collection

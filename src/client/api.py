@@ -35,7 +35,7 @@ slack_client = WebClient(token=SLACK_BOT_TOKEN)
 def notify_slack(payload: dict):
     try:
         message = (
-            "🚨 *Fraud detected!*\n"
+            " *Fraud detected!*\n"
             f"```{json.dumps(payload, indent=2, ensure_ascii=False)}```"
         )
         slack_client.chat_postMessage(channel=SLACK_CHANNEL, text=message)

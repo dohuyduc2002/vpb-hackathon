@@ -5,18 +5,13 @@ module "vpc" {
   name = local.name
   cidr = local.vpc_cidr
 
-  azs             = local.azs
-  private_subnets = local.private_subnets
-  public_subnets  = local.public_subnets
-  intra_subnets   = local.intra_subnets
-
-  enable_nat_gateway = true
+  azs            = local.azs
+  public_subnets = local.public_subnets
 
   public_subnet_tags = {
     "kubernetes.io/role/elb" = 1
   }
+  
+  map_public_ip_on_launch = true
 
-  private_subnet_tags = {
-    "kubernetes.io/role/internal-elb" = 1
-  }
 }

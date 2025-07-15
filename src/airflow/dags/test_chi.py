@@ -17,8 +17,7 @@ CLICKHOUSE_PORT = 8123
 CLICKHOUSE_USER = "ducdh"
 CLICKHOUSE_PASSWORD = "test_password"
 CLICKHOUSE_DB = "default"
-CLICKHOUSE_TABLE = "fraud_report"
-
+CLICKHOUSE_TABLE = "test"
 
 def read_all_avro_in_topic(bucket, topic, minio_client, usecols=None, filter_func=None):
     objects = minio_client.list_objects(
@@ -43,7 +42,6 @@ def read_all_avro_in_topic(bucket, topic, minio_client, usecols=None, filter_fun
     else:
         return pd.DataFrame(columns=usecols if usecols else [])
 
-
 def etl_and_insert_to_clickhouse():
     # MinIO client
     minio_client = Minio(
@@ -53,40 +51,15 @@ def etl_and_insert_to_clickhouse():
         secure=False,
     )
 
-    trans_cols = ["user", "is_fraud"]
-    filter_fraud = lambda df: df[df["is_fraud"] == "Yes"]
+    usecols = ["user", "is_fraud"]
     df_transaction = read_all_avro_in_topic(
         BUCKET,
         "transaction-topic",
         minio_client,
-        usecols=trans_cols,
-        filter_func=filter_fraud,
+        usecols=usecols,
     )
 
-    user_cols = ["idx", "person", "current_age", "total_debt"]
-    df_user = read_all_avro_in_topic(
-        BUCKET, "user-topic", minio_client, usecols=user_cols
-    )
-
-    card_cols = ["user", "card_number", "credit_limit"]
-    df_card = read_all_avro_in_topic(
-        BUCKET, "card-topic", minio_client, usecols=card_cols
-    )
-
-    # Join lần lượt
-    df_join = pd.merge(df_transaction, df_card, on="user", how="left")
-    df_join = pd.merge(df_join, df_user, left_on="user", right_on="idx", how="left")
-
-    # groupby & aggregate
-    result = df_join.groupby("user", as_index=False).agg(
-        count_fraud=("user", "size"),
-        person=("person", "first"),
-        current_age=("current_age", "first"),
-        total_debt=("total_debt", "first"),
-        card_number=("card_number", "first"),
-        credit_limit=("credit_limit", "first"),
-    )
-
+    # Kết nối ClickHouse
     client = get_client(
         host=CLICKHOUSE_HOST,
         port=CLICKHOUSE_PORT,
@@ -98,28 +71,22 @@ def etl_and_insert_to_clickhouse():
 
     client.command(
         f"""
-    CREATE TABLE IF NOT EXISTS {CLICKHOUSE_TABLE} (
-        user String,
-        count_fraud UInt32,
-        person String,
-        current_age Nullable(UInt32),
-        total_debt Nullable(String),
-        card_number Nullable(String),
-        credit_limit Nullable(String)
-    ) ENGINE = MergeTree() ORDER BY user
-    """
+        CREATE TABLE IF NOT EXISTS {CLICKHOUSE_TABLE} (
+            user String,
+            is_fraud String
+        ) ENGINE = MergeTree() ORDER BY user
+        """
     )
 
-    client.insert_df(CLICKHOUSE_TABLE, result)
+    client.insert_df(CLICKHOUSE_TABLE, df_transaction)
     print("Insert vào ClickHouse thành công!")
 
-
 with DAG(
-    "minio_to_clickhouse_fraud_report",
+    "minio_to_clickhouse_test_table",
     start_date=datetime(2025, 7, 20),
     schedule_interval="0 0 * * *",  # mỗi ngày lúc 00:00
     catchup=False,
-    tags=["minio", "clickhouse", "fraud"],
+    tags=["minio", "clickhouse", "test"],
 ) as dag:
     etl_task = PythonOperator(
         task_id="etl_and_insert_to_clickhouse",

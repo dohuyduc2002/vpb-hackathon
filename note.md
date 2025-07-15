@@ -1,6 +1,12 @@
-aws iam list-attached-user-policies --user-name fsds
+aws iam list-attached-user-policies --user-name fsds | grep "AmazonBedrockFullAccess"
 
-aws eks update-kubeconfig --region ap-southeast-1 --name eks-fsds
+aws bedrock list-foundation-models --region us-east-1 \
+  --query 'modelSummaries[?modelId==`amazon.titan-embed-text-v2:0`]'
+
+aws configure
+aws sts get-caller-identity
+
+aws eks update-kubeconfig --region us-east-1 --name eks-fsds
 aws iam list-attached-role-policies --role-name main-eks-node-group-20250705160337935100000002
 
 helm install ingress-nginx ingress-nginx/ingress-nginx \

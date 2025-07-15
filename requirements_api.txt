@@ -1,0 +1,3 @@
+pip install pymilvus boto3
+llama-index-core-0.12.48
+llama-index-vector-stores-milvus-0.8.5
