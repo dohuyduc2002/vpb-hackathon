@@ -1,122 +1,121 @@
 import os
-from fastapi import FastAPI
-from client.schema import RawItem
-import pickle
 import pandas as pd
-from slack_sdk import WebClient
-from slack_sdk.errors import SlackApiError
-from confluent_kafka.schema_registry import SchemaRegistryClient
-from confluent_kafka.schema_registry.avro import AvroSerializer
-from confluent_kafka.serialization import StringSerializer
-from confluent_kafka import SerializingProducer
-import json
+import numpy as np
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import JSONResponse
+import traceback
 
-app = FastAPI()
-
-# ----- LOAD CONFIG FROM ENV -----
-KAFKA_BROKER = os.environ.get("KAFKA_BROKER", "kafka:9092")
-KAFKA_TOPIC = os.environ.get("KAFKA_TOPIC", "fraud_predict")
-SCHEMA_REGISTRY_URL = os.environ.get(
-    "SCHEMA_REGISTRY_URL", "http://schema-registry:8081"
+from train_simple_hybrid import (
+    SimplifiedHybridFraudDetector,
+    load_and_preprocess_encoded_csv,
 )
-SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
-SLACK_CHANNEL = os.environ.get("SLACK_CHANNEL", "#fraud-alerts")
 
-# ----- LOAD ARTIFACTS -----
-with open("client/preprocess.pkl", "rb") as f:
-    preprocess = pickle.load(f)
-with open("client/model.pkl", "rb") as f:
-    model = pickle.load(f)
+MODEL_DIR = os.environ.get("MODEL_DIR", "./simple_hybrid_model")
+try:
+    model = SimplifiedHybridFraudDetector()
+    model.load_model(MODEL_DIR)
+except Exception as e:
+    print(f"Failed to load model: {e}")
+    model = None
 
-# ----- SLACK CLIENT -----
-slack_client = WebClient(token=SLACK_BOT_TOKEN)
+app = FastAPI(title="Hybrid Fraud Detection API")
 
 
-def notify_slack(payload: dict):
-    try:
-        message = (
-            " *Fraud detected!*\n"
-            f"```{json.dumps(payload, indent=2, ensure_ascii=False)}```"
+def categorize_risk_level(probability):
+    if probability >= 0.7:
+        return "HIGH"
+    elif probability >= 0.3:
+        return "MEDIUM"
+    else:
+        return "LOW"
+
+
+def analyze_risk_factors(predictions, features, feature_names, top_n=10):
+    high_risk_indices = np.where(predictions > 0.5)[0]
+    result = []
+    for idx in high_risk_indices[:top_n]:
+        factors = []
+        f = features.iloc[idx]
+        if f.get("is_night", 0) == 1:
+            factors.append("Transaction at unusual hours (night)")
+        if f.get("is_weekend", 0) == 1:
+            factors.append("Weekend transaction")
+        if f.get("high_amount", 0) == 1:
+            factors.append("High transaction amount")
+        if f.get("user_fraud_risk", 0) > 0.1:
+            factors.append(f"User has fraud history ({f['user_fraud_risk']:.1%})")
+        if f.get("merchant_fraud_risk", 0) > 0.1:
+            factors.append(
+                f"Merchant has fraud history ({f['merchant_fraud_risk']:.1%})"
+            )
+        if f.get("amount_vs_user_avg", 0) > 3:
+            factors.append("Amount much higher than user average")
+        if f.get("amount_vs_merchant_avg", 0) > 3:
+            factors.append("Amount much higher than merchant average")
+        result.append(
+            {
+                "transaction_id": int(idx),
+                "fraud_probability": float(predictions[idx]),
+                "risk_factors": factors,
+            }
         )
-        slack_client.chat_postMessage(channel=SLACK_CHANNEL, text=message)
-    except SlackApiError as e:
-        print(f"Slack notify error: {e.response['error']}")
+    return result
 
 
-# ----- AVRO SCHEMA -----
-avro_schema_str = """
-{
-  "namespace": "fraud.predict",
-  "name": "Prediction",
-  "type": "record",
-  "fields": [
-    {"name": "user", "type": "string"},
-    {"name": "card", "type": "string"},
-    {"name": "year", "type": "string"},
-    {"name": "month", "type": "string"},
-    {"name": "day", "type": "string"},
-    {"name": "time", "type": "string"},
-    {"name": "amount", "type": "string"},
-    {"name": "use_chip", "type": ["null", "string"], "default": null},
-    {"name": "merchant_name", "type": ["null", "string"], "default": null},
-    {"name": "merchant_city", "type": ["null", "string"], "default": null},
-    {"name": "merchant_state", "type": ["null", "string"], "default": null},
-    {"name": "zip", "type": ["null", "string"], "default": null},
-    {"name": "mcc", "type": "string"},
-    {"name": "errors", "type": ["null", "string"], "default": null},
-    {"name": "prediction", "type": "string"}
-  ]
-}
-"""
-
-# ----- KAFKA PRODUCER SETUP -----
-schema_registry_conf = {"url": SCHEMA_REGISTRY_URL}
-schema_registry_client = SchemaRegistryClient(schema_registry_conf)
-
-avro_serializer = AvroSerializer(
-    schema_registry_client=schema_registry_client,
-    schema_str=avro_schema_str,
-    to_dict=lambda obj, ctx: obj,
-)
-
-string_serializer = StringSerializer("utf_8")
-
-producer_conf = {
-    "bootstrap.servers": KAFKA_BROKER,
-    "key.serializer": string_serializer,
-    "value.serializer": avro_serializer,
-    "schema.registry.url": SCHEMA_REGISTRY_URL,
-}
-producer = SerializingProducer(producer_conf)
+from io import StringIO
 
 
-def send_to_kafka(payload: dict):
+@app.post("/infer/csv")
+async def infer_csv(file: UploadFile = File(...)):
+    if model is None:
+        return JSONResponse({"error": "Model not loaded"}, status_code=500)
     try:
-        user_key = payload.get("user")
-        if not user_key:
-            raise ValueError("Field 'user' must not be empty, required as Kafka key.")
-        producer.produce(topic=KAFKA_TOPIC, key=user_key, value=payload)
-        producer.flush()
+        content = await file.read()
+        file_stream = StringIO(content.decode("utf-8"))
+        df = pd.read_csv(file_stream)
+
+        # Chuẩn hóa Amount
+        if "Amount" in df.columns:
+            df["Amount"] = df["Amount"].replace("[\$,]", "", regex=True).astype(float)
+
+        # Map 'Is Fraud?' sang 0/1
+        if "Is Fraud?" in df.columns:
+            df["Is Fraud?"] = df["Is Fraud?"].map({"Yes": 1, "No": 0})
+            df["Is Fraud?"] = df["Is Fraud?"].fillna(0)
+
+        # Convert "Time" (HH:MM) sang "Hour" (int)
+        if "Time" in df.columns and "Hour" not in df.columns:
+            df["Hour"] = df["Time"].astype(str).str.split(":").str[0].astype(int)
+
+        # Nếu pipeline yêu cầu cột "Is_Fraud" thay cho "Is Fraud?"
+        if "Is Fraud?" in df.columns and "Is_Fraud" not in df.columns:
+            df = df.rename(columns={"Is Fraud?": "Is_Fraud"})
+
+        # Tiếp tục pipeline
+        enhanced_df = model.create_graph_features(df)
+        features = model.prepare_features(enhanced_df)
+        fraud_prob, binary_pred = model.predict(df)
+        df["fraud_probability"] = fraud_prob
+        df["risk_level"] = [categorize_risk_level(p) for p in fraud_prob]
+        total = len(df)
+        n_high = int((df["risk_level"] == "HIGH").sum())
+        n_medium = int((df["risk_level"] == "MEDIUM").sum())
+        n_low = int((df["risk_level"] == "LOW").sum())
+        risk_analysis = analyze_risk_factors(
+            fraud_prob, features, model.feature_names, top_n=10
+        )
+        return {
+            "total_transactions": total,
+            "high_risk": n_high,
+            "medium_risk": n_medium,
+            "low_risk": n_low,
+            "top_10_high_risk_analysis": risk_analysis,
+            "predictions": df[["fraud_probability", "risk_level"]].to_dict(
+                orient="records"
+            ),
+        }
     except Exception as e:
-        print(f"Kafka Avro produce error: {e}")
+        import traceback
 
-
-@app.post("/predict")
-def predict(data: RawItem):
-    df = pd.DataFrame([data.dict()])
-    X = preprocess.transform(df)
-    pred_label = model.predict(X)[0]
-    pred = "fraud" if pred_label == 1 else "not_fraud"
-    sink_payload = data.dict()
-    sink_payload["prediction"] = pred
-
-    if pred == "fraud":
-        notify_slack(sink_payload)
-
-    try:
-        send_to_kafka(sink_payload)
-    except Exception as ex:
-        # Log error, không fail API, chỉ cảnh báo
-        print(f"Failed to produce to Kafka: {ex}")
-
-    return {"prediction": pred}
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)

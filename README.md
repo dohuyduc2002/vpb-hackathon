@@ -2,11 +2,10 @@
 This readme will demonstrate how to set up a real-time fraud detection system using Kafka, Flink, Milvus, ClickHouse, and MinIO on a EKS cluster. The system will process credit card transactions in real-time, detect fraudulent activities, and store the data for further analysis.
 
 ## Install EKS cluster
-Firstly, login to your AWS account through AWS CLI, for POC, I'm using `AdministratorAccess` policy. After that navigate to `terraform` directory to provision EKS cluster, this will provision EKS cluster with full acess to S3 and EC2.
-
+Firstly, login to your AWS account through AWS CLI, for POC, I'm using `AdministratorAccess` policy. After that navigate to `terraform` directory to provision EKS cluster, this will provision EKS cluster with full acess to S3 and EC2. To be able to provision EKS cluster, you have to configure your AWS credentials with `aws configure` command and login with your AWS IAM account.
 ```bash
 cd terraform
-terraform init
+terraform init #This will download all required providers, in this case I'm using another EKS module to provision EKS cluster
 terraform apply
 ```
 After the EKS cluster is created, add context to your kubeconfig file to access the EKS cluster with kubectl
@@ -23,8 +22,7 @@ Firstly you have to download data from kaggle with kaggle cli, be sure to login 
 #!/bin/bash
 kaggle datasets download ealtman2019/credit-card-transactions
 ```
-I'm also cleaning data to standardize the data before produce it to streaming, you can find the code in `src/streaming/clean_data.py`
-
+I'm also cleaning data to standardize the data before produce it to streaming, you can find the code in `src/streaming/clean_data.py`, this script will create 3 cleaned files in `data` folder
 ## Build docker images
 1. Kafka connect image
 ```bash
@@ -75,9 +73,9 @@ After Nginx controller got external IP, modify the `/etc/hosts` file to point th
 nslookup a9ff37ef161dc4f5f99791ea5eebafb7-691184424.us-east-1.elb.amazonaws.com
 
 3.217.98.32 dbeaver.ducdh.com kafka.ducdh.com milvus-example.local milvus-attu.local minio.ducdh.com console.minio.ducdh.com
-
 ```
 ### Install Strimzi Kafka Operator
+In this case, I'm using Strimzi Kafka Operator to manage Kafka cluster with customized CRDs which is useful for managing Kafka Connect, Kafka Connectors, and other Kafka related resources.
 ```bash
 helm repo add strimzi https://strimzi.io/charts/
 helm install strimzi strimzi/strimzi-kafka-operator \
@@ -85,10 +83,12 @@ helm install strimzi strimzi/strimzi-kafka-operator \
   --namespace kafka 
 ```
 ### Install Kafka infra
+After Strimzi is installed, I have created a custom Kafka infrastructure with 1 Kafka broker, 1 Kafka Controler using Kraft, and 3 topics which is `transaction-topic`, `card-topic`, and `user-topic`. For the UI, I'm using Kafka Provectus and connect to the broker. In chart, I'm also change the bootstrap server and Confluent Kafka Schema Registry to use the external IP to producer messages from Python script to the EKS cluster. 
 ```bash
 helm upgrade --install kafka-infra ./helm/kafka -n kafka --create-namespace
 ```
 ### Install Minio
+I'm using MinIO as object storage for this POC to store data from Kafka Connect which will sink messages from Kafka topic to MinIO.
 ```bash
 helm repo add minio https://charts.min.io/
 helm upgrade --install minio minio/minio \
@@ -112,15 +112,15 @@ Create minio bucket
 mc alias set localMinio http://minio.ducdh.com minio minio123
 mc mb localMinio/stream-bucket
 mc mb localMinio/milvus-bucket
-mc mb localMinio/flink-data
 ```
-After these steps, produce streaming data to kafka topics with this command, this will produce roughly 26 million records to transaction topic, 6000 records to card topic and 2000 record to user topic, so it will take a while to finish, you can check the progress in Kafka UI. **You can continue to the next step while waiting for this command to finish.**
+In this repository, I'm producing data as Avro format to Kafka topics, so you need to create a schema registry to register the Avro schemas for each topic, and then register the schemas to the schema registry. After these steps, produce streaming data to kafka topics with this command, this will produce roughly 26 million records to transaction topic, 6000 records to card topic and 2000 record to user topic, so it will take a while to finish, you can check the progress in Kafka UI. 
+**You can continue to the next step while waiting for this command to finish.**
 ```bash
 cd src/producer
 bash run.sh
 ```
-
 ### Clickhouse
+Because we are producing streaming data, so ClickHouse is the suitable OLAP database to store and analyze data. In this POC, I'm using ClickHouse Operator to manage ClickHouse cluster and ClickHouse tables. You can install ClickHouse Operator with this command
 ```bash
 k create namespace clickhouse
 # After namespace is created, you can install ClickHouse Operator this script
@@ -130,6 +130,7 @@ k apply -f clickhouse/clickhouse.yaml
 ```
 
 ### DBeaver
+For end users to interact with ClickHouse, I'm using DBeaver as a database client with my custom helm chart.
 ```bash
 helm upgrade --install dbeaver ./helm/dbeaver -n clickhouse 
 ```
@@ -209,15 +210,12 @@ CREATE TABLE transaction_topic
 ENGINE = MergeTree
 ORDER BY idx;
 ```
-4. fraud table (for airflow etl job)
-```sql
 
-```
 ### Install Kafka Connect and Kafka Connector
+After create table in ClickHouse and bucket in MinIO, I'm installing 1 Kafka Connect cluster with 6 connectors to consume data from Kafka topics and sink to ClickHouse and MinIO. The Kafka Connect cluster will be configured to use the Confluent Schema Registry to register the Avro schemas for each topic, each message will be serialized as `Avro` format for value and `String` format for key.
 ```bash
 k apply -f kafka/
 ```
-This will create a Kafka Connect cluster and Kafka Connectors to consume data from Kafka topics and write to ClickHouse, MinIO. 
 
 ### Milvus 
 ```bash
@@ -248,32 +246,54 @@ helm upgrade --install milvus milvus/milvus \
 ```
 
 ### Airflow
+For ETL process, I'm using Airflow to orchestrate the ETL process which load data from Minio to ClickHouse. This will produce intermediate data as `parquet` format in MinIO and then load it to ClickHouse.
 ```bash
 helm repo add apache-airflow https://airflow.apache.org
 helm upgrade --install airflow apache-airflow/airflow \
-  --version 1.16.0 \
   --namespace airflow \
   --create-namespace \
   --set defaultAirflowRepository=microwave1005/airflow-custom \
-  --set defaultAirflowTag=0.0.6 \
-  --set airflowVersion=2.10.0 \
+  --set defaultAirflowTag=0.0.16 \
   --set workers.persistence.size=5Gi \
   --set triggerer.persistence.size=5Gi \
   --set ingress.web.enabled=true \
   --set ingress.web.hosts[0]=airflow.ducdh.com \
-  --set ingress.web.ingressClassName=nginx
+  --set ingress.web.ingressClassName=nginx 
 ```
+
+## Model description 
+
+
 k port-forward svc/airflow-api-server 8080:8080
 kubectl delete all --all -n airflow --grace-period=0 --force
+k delete pvc --all -n airflow
 
 docker build --no-cache \
     -f Dockerfile.airflow \
-    -t microwave1005/airflow-custom:0.0.6 \
+    -t microwave1005/airflow-custom:0.0.16 \
     --push \
     .
+
 
 kcat -b 34.172.236.120:9094 \
      -t user-topic \
      -r http://34.59.250.15:8081 \
      -s value=avro \
      -C -c 5
+
+
+helm repo add chroma https://amikos-tech.github.io/chromadb-chart/
+helm install chroma chroma/chromadb \
+  --namespace chroma \
+  --create-namespace \
+  --set ingress.enabled=true \
+  --set ingress.className=nginx \
+  --set ingress.hosts[0].host=chroma.ducdh.com \
+  --set ingress.hosts[0].paths[0].path=/ \
+  --set ingress.hosts[0].paths[0].pathType=ImplementationSpecific
+
+
+kubectl create secret generic aws-cred \
+  --namespace airflow \
+  --from-literal=AWS_ACCESS_KEY_ID=AKIAQQABDTYWKRDN2ZMR \
+  --from-literal=AWS_SECRET_ACCESS_KEY=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
