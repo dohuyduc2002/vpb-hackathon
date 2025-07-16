@@ -1,7 +1,0 @@
-seaborn
-torch
-torch_geometric
-numpy
-pandas
-network
-scikit-learn
