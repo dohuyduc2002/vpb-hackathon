@@ -10,7 +10,7 @@ terraform apply
 ```
 After the EKS cluster is created, add context to your kubeconfig file to access the EKS cluster with kubectl
 ```bash
-aws eks update-kubeconfig --region us-east-1 --name eks-fsds
+aws eks update-kubeconfig --region us-east-1 --name fsds
 ```
 You also need to crate storage class EBS GP3 for other components to use
 ```bash
@@ -36,7 +36,7 @@ docker build --no-cache\
 ```bash
 docker build --no-cache \
     -f Dockerfile.api \
-    -t microwave1005/model-api:0.0.1 \
+    -t microwave1005/fraud-model-api:0.0.1 \
     --push \
     .
 ```
@@ -70,7 +70,7 @@ helm install ingress-nginx ingress-nginx/ingress-nginx \
 
 After Nginx controller got external IP, modify the `/etc/hosts` file to point the domain to the external IP of Nginx controller, you can get the external IP with this command
 ```bash
-nslookup a9ff37ef161dc4f5f99791ea5eebafb7-691184424.us-east-1.elb.amazonaws.com
+nslookup a332765274bd34e71b8b558cbe23c12a-1675950531.us-east-1.elb.amazonaws.com
 
 3.217.98.32 dbeaver.ducdh.com kafka.ducdh.com milvus-example.local milvus-attu.local minio.ducdh.com console.minio.ducdh.com
 ```
@@ -111,7 +111,6 @@ Create minio bucket
 ```bash
 mc alias set localMinio http://minio.ducdh.com minio minio123
 mc mb localMinio/stream-bucket
-mc mb localMinio/milvus-bucket
 ```
 In this repository, I'm producing data as Avro format to Kafka topics, so you need to create a schema registry to register the Avro schemas for each topic, and then register the schemas to the schema registry. After these steps, produce streaming data to kafka topics with this command, this will produce roughly 26 million records to transaction topic, 6000 records to card topic and 2000 record to user topic, so it will take a while to finish, you can check the progress in Kafka UI. 
 **You can continue to the next step while waiting for this command to finish.**
@@ -126,7 +125,7 @@ k create namespace clickhouse
 # After namespace is created, you can install ClickHouse Operator this script
 bash ./clickhouse/install.sh
 # After ClickHouse Operator is installed, you can install ClickHouse cluster with this command
-k apply -f clickhouse/clickhouse.yaml
+k apply -f clickhouse/clickhouse.yaml -n clickhouse
 ```
 
 ### DBeaver
@@ -140,7 +139,7 @@ After installing DBeaver and create user, connect to ClickHouse with the provide
 CREATE TABLE card_topic
 (
     idx Int32,
-    user Int64,
+    user String,
     card_index Int64,
     card_brand String,
     card_type String,
@@ -191,8 +190,8 @@ ORDER BY idx;
 CREATE TABLE transaction_topic
 (
     idx             Int32,
-    user            Int64,
-    card            Int64,
+    user            String,
+    card            String,
     year            Int32,
     month           Int32,
     day             Int32,
@@ -217,34 +216,6 @@ After create table in ClickHouse and bucket in MinIO, I'm installing 1 Kafka Con
 k apply -f kafka/
 ```
 
-### Milvus 
-```bash
-helm repo add milvus https://zilliztech.github.io/milvus-helm/
-helm upgrade --install milvus milvus/milvus \
-  --namespace milvus \
-  --create-namespace \
-  --set image.all.tag=v2.6.0-rc1 \
-  --set cluster.enabled=false \
-  --set minio.enabled=false \
-  --set externalS3.enabled=true \
-  --set externalS3.host=minio.minio.svc.cluster.local \
-  --set externalS3.port=9000 \
-  --set externalS3.accessKey=minio \
-  --set externalS3.secretKey=minio123 \
-  --set externalS3.bucketName=milvus-bucket \
-  --set externalS3.useSSL=false \
-  --set standalone.messageQueue=woodpecker \
-  --set woodpecker.enabled=true \
-  --set streaming.enabled=true \
-  --set ingress.enabled=true \
-  --set ingress.ingressClassName=nginx \
-  --set standalone.persistence.persistentVolumeClaim.size=5Gi \
-  --set attu.enabled=true \
-  --set attu.ingress.enabled=true \
-  --set attu.ingress.ingressClassName=nginx \
-  --set pulsarv3.enabled=false
-```
-
 ### Airflow
 For ETL process, I'm using Airflow to orchestrate the ETL process which load data from Minio to ClickHouse. This will produce intermediate data as `parquet` format in MinIO and then load it to ClickHouse.
 ```bash
@@ -253,13 +224,18 @@ helm upgrade --install airflow apache-airflow/airflow \
   --namespace airflow \
   --create-namespace \
   --set defaultAirflowRepository=microwave1005/airflow-custom \
-  --set defaultAirflowTag=0.0.16 \
+  --set defaultAirflowTag=0.0.17 \
   --set workers.persistence.size=5Gi \
   --set triggerer.persistence.size=5Gi \
   --set ingress.web.enabled=true \
   --set ingress.web.hosts[0]=airflow.ducdh.com \
-  --set ingress.web.ingressClassName=nginx 
+  --set ingress.web.ingressClassName=nginx
 ```
+
+kubectl create secret generic aws-cred \
+  --namespace airflow \
+  --from-literal=AWS_ACCESS_KEY_ID=AKIAQQABDTYWKRDN2ZMR \
+  --from-literal=AWS_SECRET_ACCESS_KEY=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
 
 ## Model description 
 
@@ -270,7 +246,7 @@ k delete pvc --all -n airflow
 
 docker build --no-cache \
     -f Dockerfile.airflow \
-    -t microwave1005/airflow-custom:0.0.16 \
+    -t microwave1005/airflow-custom:0.0.17 \
     --push \
     .
 

@@ -190,7 +190,7 @@ def load(**kwargs):
     client.command(
         f"""
         CREATE TABLE IF NOT EXISTS {CLICKHOUSE_TABLE} (
-            user UInt32,
+            user String,
             count_fraud UInt32,
             person String,
             current_age Nullable(Int32),

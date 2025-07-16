@@ -9,11 +9,11 @@
     },
     {
       "name": "user",
-      "type": "long"
+      "type": "string"
     },
     {
       "name": "card",
-      "type": "long"
+      "type": "string"
     },
     {
       "name": "year",

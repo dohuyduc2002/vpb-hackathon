@@ -4,8 +4,8 @@ transaction_schema = {
     "name": "Transaction",
     "fields": [
         {"name": "idx", "type": "int"},
-        {"name": "user", "type": "long"},
-        {"name": "card", "type": "long"},
+        {"name": "user", "type": "string"},
+        {"name": "card", "type": "string"},
         {"name": "year", "type": "int"},
         {"name": "month", "type": "int"},
         {"name": "day", "type": "int"},
@@ -56,7 +56,7 @@ card_schema = {
     "name": "Card",
     "fields": [
         {"name": "idx", "type": "int"},
-        {"name": "user", "type": "long"},
+        {"name": "user", "type": "string"},
         {"name": "card_index", "type": "long"},
         {"name": "card_brand", "type": "string"},
         {"name": "card_type", "type": "string"},
