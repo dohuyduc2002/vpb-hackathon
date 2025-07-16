@@ -36,7 +36,9 @@ TRANSACTION_AVRO_SCHEMA_STR = """
 }
 """
 
-schema_registry_conf = {"url": "http://schema-registry-svc:8081"}
+schema_registry_conf = {
+    "url": "http://schema-registry-svc.kafka.svc.cluster.local:8081"
+}
 schema_registry_client = SchemaRegistryClient(schema_registry_conf)
 
 
@@ -49,7 +51,7 @@ avro_serializer = AvroSerializer(
 )
 
 producer_config = {
-    "bootstrap.servers": "kafka-cluster-0-kafka-bootstrap:9092",
+    "bootstrap.servers": "kafka-cluster-0-kafka-bootstrap.kafka.svc.cluster.local:9092",
     "key.serializer": StringSerializer("utf_8"),
     "value.serializer": avro_serializer,
     "queue.buffering.max.messages": 100000,

@@ -28,7 +28,7 @@ I'm also cleaning data to standardize the data before produce it to streaming, y
 ```bash
 docker build --no-cache\
     -f Dockerfile.kafka_connect \
-    -t microwave1005/kafka-connect-s3:0.0.1 \
+    -t microwave1005/kafka-connect-s3:0.0.2 \
     --push \
     .
 ```
@@ -36,7 +36,7 @@ docker build --no-cache\
 ```bash
 docker build --no-cache \
     -f Dockerfile.api \
-    -t microwave1005/fraud-model-api:0.0.1 \
+    -t microwave1005/fraud-model-api:0.5 \
     --push \
     .
 ```
@@ -67,10 +67,9 @@ helm install ingress-nginx ingress-nginx/ingress-nginx \
   --set controller.config.proxy-send-timeout="600" \
   --set controller.config.proxy-read-timeout="600"
 ```
-
 After Nginx controller got external IP, modify the `/etc/hosts` file to point the domain to the external IP of Nginx controller, you can get the external IP with this command
 ```bash
-nslookup a332765274bd34e71b8b558cbe23c12a-1675950531.us-east-1.elb.amazonaws.com
+nslookup a147ebac828a94dc9baee7557364b830-735281392.us-east-1.elb.amazonaws.com
 
 3.217.98.32 dbeaver.ducdh.com kafka.ducdh.com milvus-example.local milvus-attu.local minio.ducdh.com console.minio.ducdh.com
 ```
@@ -112,7 +111,7 @@ Create minio bucket
 mc alias set localMinio http://minio.ducdh.com minio minio123
 mc mb localMinio/stream-bucket
 ```
-In this repository, I'm producing data as Avro format to Kafka topics, so you need to create a schema registry to register the Avro schemas for each topic, and then register the schemas to the schema registry. After these steps, produce streaming data to kafka topics with this command, this will produce roughly 26 million records to transaction topic, 6000 records to card topic and 2000 record to user topic, so it will take a while to finish, you can check the progress in Kafka UI. 
+In this repository, I'm producing data as Avro format to Kafka topics, so you need to create a schema registry to register the Avro schemas for each topic, and then register the schemas to the schema registry. After these steps, produce streaming data to kafka topics with this command, this will produce roughly 24 million records to transaction topic, 6000 records to card topic and 2000 record to user topic, so it will take a while to finish, you can check the progress in Kafka UI. 
 **You can continue to the next step while waiting for this command to finish.**
 ```bash
 cd src/producer
@@ -138,20 +137,20 @@ After installing DBeaver and create user, connect to ClickHouse with the provide
 ```sql
 CREATE TABLE card_topic
 (
-    idx Int32,
-    user String,
-    card_index Int64,
-    card_brand String,
-    card_type String,
-    card_number Int64,
-    expires String,
-    cvv Int32,
-    has_chip String,
-    cards_issued Int64,
-    credit_limit String,
-    acct_open_date String,
-    year_pin_last_changed Int32,
-    card_on_dark_web String
+    idx                     Int32,
+    user                    String,
+    card_index              Int64,
+    card_brand              String,
+    card_type               String,
+    card_number             Int64,
+    expires                 String,
+    cvv                     Int32,
+    has_chip                String,
+    cards_issued            Int64,
+    credit_limit            String,
+    acct_open_date          String,
+    year_pin_last_changed   Int32,
+    card_on_dark_web        String
 )
 ENGINE = MergeTree()
 ORDER BY idx;
@@ -161,6 +160,7 @@ ORDER BY idx;
 CREATE TABLE user_topic
 (
     idx                         Int32,
+    user                        String,
     person                      String,
     current_age                 Int32,
     retirement_age              Int32,
@@ -224,29 +224,46 @@ helm upgrade --install airflow apache-airflow/airflow \
   --namespace airflow \
   --create-namespace \
   --set defaultAirflowRepository=microwave1005/airflow-custom \
-  --set defaultAirflowTag=0.0.17 \
+  --set defaultAirflowTag=0.0.2 \
   --set workers.persistence.size=5Gi \
   --set triggerer.persistence.size=5Gi \
   --set ingress.web.enabled=true \
   --set ingress.web.hosts[0]=airflow.ducdh.com \
   --set ingress.web.ingressClassName=nginx
 ```
-
+To allow airflow to run indexing job to ChromaDB with AWS Bedrock API, you has to ingest secret in to airflow namesapce by this command:
+```bash
 kubectl create secret generic aws-cred \
   --namespace airflow \
   --from-literal=AWS_ACCESS_KEY_ID=AKIAQQABDTYWKRDN2ZMR \
   --from-literal=AWS_SECRET_ACCESS_KEY=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
-
+```
 ## Model description 
+### Model installation
+```bash
+helm upgrade --install api ./helm/api \
+  --namespace api \
+  --create-namespace \
+  --set image.repository=microwave1005/fraud-model-api \
+  --set image.tag=0.5 \
+  --set service.type=ClusterIP \
+  --set service.port=8000 \
+  --set ingress.enabled=true \
+  --set ingress.hosts[0].host=api.ducdh.com \
+  --set ingress.hosts[0].paths[0].path=/ \
+  --set ingress.hosts[0].paths[0].pathType=Prefix \
+  --set secrets.slackBotTokenKey=slack_bot_token \
+  --set secrets.slackBotToken="xoxb-9061740640727-9075485408565-mQpwYOMJn2mKcFCAgNJZuPqo"
+```
 
-
-k port-forward svc/airflow-api-server 8080:8080
+k port-forward svc/airflow-api-server -n airflow 8080:8080
 kubectl delete all --all -n airflow --grace-period=0 --force
 k delete pvc --all -n airflow
 
+
 docker build --no-cache \
     -f Dockerfile.airflow \
-    -t microwave1005/airflow-custom:0.0.17 \
+    -t microwave1005/airflow-custom:0.0.2 \
     --push \
     .
 
@@ -266,10 +283,11 @@ helm install chroma chroma/chromadb \
   --set ingress.className=nginx \
   --set ingress.hosts[0].host=chroma.ducdh.com \
   --set ingress.hosts[0].paths[0].path=/ \
-  --set ingress.hosts[0].paths[0].pathType=ImplementationSpecific
+  --set ingress.hosts[0].paths[0].pathType=Prefix
 
 
-kubectl create secret generic aws-cred \
-  --namespace airflow \
-  --from-literal=AWS_ACCESS_KEY_ID=AKIAQQABDTYWKRDN2ZMR \
-  --from-literal=AWS_SECRET_ACCESS_KEY=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
+kubectl get node  -o json | jq -r '.items[].status.images[].names'
+
+sudo ctr -n k8s.io images rm docker.io/microwave1005/fraud-model-api@sha256:09601b66722967ad6d95320d7cdb1a8841f0de7e4ea0f1f1eebd51a5fd550ac0
+
+sudo ctr -n k8s.io images rm docker.io/microwave1005/fraud-model-api:0.1

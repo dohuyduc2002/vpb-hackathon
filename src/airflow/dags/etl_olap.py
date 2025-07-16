@@ -133,7 +133,7 @@ def transform(**kwargs):
 
     # Join 
     df_join = pd.merge(df_transaction, df_card, on="user", how="left")
-    df_join = pd.merge(df_join, df_user, left_on="user", right_on="idx", how="left")
+    df_join = pd.merge(df_join, df_user, on="user", how="left")
 
     # groupby & aggregate
     result = df_join.groupby("user", as_index=False).agg(
@@ -162,7 +162,7 @@ def load(**kwargs):
     result_key = ti.xcom_pull(key="result_key", task_ids="transform_task")
     result = df_from_minio_parquet(minio_client, BUCKET, result_key)
 
-    result["user"] = result["user"].astype("uint32")
+    result["user"] = result["user"].astype("str")
     result['count_fraud'] = result['count_fraud'].astype('uint32')
     result['person'] = result['person'].astype(str)
     result['current_age'] = result['current_age'].astype('Int32')
@@ -197,7 +197,7 @@ def load(**kwargs):
             total_debt Nullable(String),
             card_number Nullable(String),
             credit_limit Nullable(String)
-        ) ENGINE = MergeTree() ORDER BY user
+        ) ENGINE = MergeTree() ORDER BY count_fraud
         """
     )
     client.insert_df(CLICKHOUSE_TABLE, result)

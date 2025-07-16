@@ -28,6 +28,7 @@ user_schema = {
     "name": "User",
     "fields": [
         {"name": "idx", "type": "int"},
+        {"name": "user", "type": "string"},
         {"name": "person", "type": "string"},
         {"name": "current_age", "type": "int"},
         {"name": "retirement_age", "type": "int"},

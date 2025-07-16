@@ -18,14 +18,6 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            - name: KAFKA_BROKER
-              value: {{ .Values.env.KAFKA_BROKER | quote }}
-            - name: KAFKA_TOPIC
-              value: {{ .Values.env.KAFKA_TOPIC | quote }}
-            - name: SCHEMA_REGISTRY_URL
-              value: {{ .Values.env.SCHEMA_REGISTRY_URL | quote }}
-            - name: SLACK_CHANNEL
-              value: {{ .Values.env.SLACK_CHANNEL | quote }}
             - name: SLACK_BOT_TOKEN
               valueFrom:
                 secretKeyRef:

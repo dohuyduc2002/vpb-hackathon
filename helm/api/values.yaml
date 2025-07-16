@@ -1,26 +1,20 @@
-name: fraud-detection-api
+name: fraud-model-api
 namespace: api
 
 replicaCount: 1
 
 image:
-  repository: microwave1005/fraud-detection-api
-  tag: latest
+  repository: microwave1005/fraud-model-api
+  tag: 0.0.1
   pullPolicy: IfNotPresent
-
-env:
-  KAFKA_BROKER: "kafka.kafka.svc.cluster.local:9092"
-  KAFKA_TOPIC: "fraud_predict"
-  SCHEMA_REGISTRY_URL: "http://schema-registry.kafka.svc.cluster.local:8081"
-  SLACK_CHANNEL: "#fraud-alerts"
 
 secrets:
   slackSecretName: slackbot-secret
-  slackBotTokenKey: slackbot-token
+  slackBotTokenKey: slack_bot_token
   slackBotToken: "xoxb-your-slack-bot-token"
 
 ingress:
   enabled: true
   ingressClassName: nginx
-  host: fraud-api.local
+  host: api.ducdh.com
   annotations: {}

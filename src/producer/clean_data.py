@@ -21,15 +21,6 @@ def add_idx(df):
     df.insert(0, "idx", range(len(df)))
 
 
-def add_prefix_transaction(df):
-    df["user"] = df["user"].apply(lambda x: f"user{int(x)}")
-    df["card"] = df["card"].apply(lambda x: f"card{int(x)}")
-
-
-def add_prefix_card(df):
-    df["user"] = df["user"].apply(lambda x: f"user{int(x)}")
-
-
 def main():
     base_dir = Path(__file__).resolve().parent.parent.parent
     data_dir = base_dir / "data"
@@ -42,16 +33,17 @@ def main():
     add_idx(card_df)
     add_idx(transaction_df)
 
-    # Bước 1: clean column
     user_df = clean_column_names(user_df)
     card_df = clean_column_names(card_df)
     transaction_df = clean_column_names(transaction_df)
 
-    # Bước 2: Thêm prefix đúng file
-    add_prefix_transaction(transaction_df)
-    add_prefix_card(card_df)
+    user_df["user"] = user_df["idx"].apply(lambda x: f"user{int(x)}")
+    
+    card_df["user"] = card_df["user"].apply(lambda x: f"user{int(x)}")
+    
+    transaction_df["card"] = transaction_df["card"].apply(lambda x: f"card{int(x)}")
+    transaction_df["user"] = transaction_df["user"].apply(lambda x: f"user{int(x)}")
 
-    # Bước 3: Save file
     user_df.to_csv(data_dir / "user_cleaned.csv", index=False)
     card_df.to_csv(data_dir / "card_cleaned.csv", index=False)
     transaction_df.to_csv(data_dir / "transaction_cleaned.csv", index=False)

@@ -8,6 +8,10 @@
       "type": "int"
     },
     {
+      "name": "user",
+      "type": "string"
+    },
+    {
       "name": "person",
       "type": "string"
     },

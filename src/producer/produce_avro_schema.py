@@ -22,7 +22,7 @@ def get_avro_producer(avro_name):
     with open(avro_dir / avro_name, "r") as f:
         schema_str = f.read()
     schema_registry_conf = {
-        "url": "http://a9dd030d7f33547199a36e8de9bce817-1314788978.us-east-1.elb.amazonaws.com:8081"
+        "url": "http://ad52692b7d0ae41cabfdcf8f99816daf-463135936.us-east-1.elb.amazonaws.com:8081"
     }
     schema_registry_client = SchemaRegistryClient(schema_registry_conf)
     avro_serializer = AvroSerializer(
@@ -31,7 +31,7 @@ def get_avro_producer(avro_name):
     )
     # Producer config
     producer_conf = {
-        "bootstrap.servers": "a6c216fec69114bf38744799d4f58127-292964013.us-east-1.elb.amazonaws.com:9094",
+        "bootstrap.servers": "af8d07cc8fe7b410dad5212f956d90cf-1672909144.us-east-1.elb.amazonaws.com:9094",
         "key.serializer": StringSerializer("utf_8"),
         "value.serializer": avro_serializer,
         "queue.buffering.max.messages": 100000,
