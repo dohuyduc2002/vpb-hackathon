@@ -1,0 +1,20 @@
+name: fraud-model-api
+namespace: api
+
+replicaCount: 1
+
+image:
+  repository: microwave1005/fraud-model-api
+  tag: 0.0.1
+  pullPolicy: IfNotPresent
+
+secrets:
+  slackSecretName: slackbot-secret
+  slackBotTokenKey: slack_bot_token
+  slackBotToken: "xoxb-your-slack-bot-token"
+
+ingress:
+  enabled: true
+  ingressClassName: nginx
+  host: api.ducdh.com
+  annotations: {}

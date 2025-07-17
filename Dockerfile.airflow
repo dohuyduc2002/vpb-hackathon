@@ -1,0 +1,10 @@
+FROM apache/airflow:3.0.2
+
+RUN pip install apache-airflow-providers-cncf-kubernetes==10.5.0
+RUN pip install apache-airflow-providers-standard==1.2.0
+
+COPY ./requirements_dag.txt /requirements_dag.txt
+
+RUN pip install --no-cache-dir -r /requirements_dag.txt
+
+COPY ./src/airflow/dags/ ${AIRFLOW_HOME}/dags/

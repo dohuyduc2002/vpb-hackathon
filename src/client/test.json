@@ -1,0 +1,15 @@
+{
+    "user": "user4",
+    "card": "card7",
+    "year": "2023",
+    "month": "5",
+    "day": "20",
+    "time": "5:23",
+    "amount": "1200",
+    "use_chip": "Chip Transaction",
+    "merchant_name": "3189517333335617109",
+    "merchant_city": "Riverside",
+    "merchant_state": "CA",
+    "zip": "92505.0",
+    "mcc": "7538"
+}

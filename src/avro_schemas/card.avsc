@@ -1,0 +1,63 @@
+{
+  "type": "record",
+  "namespace": "com.example",
+  "name": "Card",
+  "fields": [
+    {
+      "name": "idx",
+      "type": "int"
+    },
+    {
+      "name": "user",
+      "type": "string"
+    },
+    {
+      "name": "card_index",
+      "type": "long"
+    },
+    {
+      "name": "card_brand",
+      "type": "string"
+    },
+    {
+      "name": "card_type",
+      "type": "string"
+    },
+    {
+      "name": "card_number",
+      "type": "long"
+    },
+    {
+      "name": "expires",
+      "type": "string"
+    },
+    {
+      "name": "cvv",
+      "type": "int"
+    },
+    {
+      "name": "has_chip",
+      "type": "string"
+    },
+    {
+      "name": "cards_issued",
+      "type": "long"
+    },
+    {
+      "name": "credit_limit",
+      "type": "string"
+    },
+    {
+      "name": "acct_open_date",
+      "type": "string"
+    },
+    {
+      "name": "year_pin_last_changed",
+      "type": "int"
+    },
+    {
+      "name": "card_on_dark_web",
+      "type": "string"
+    }
+  ]
+}

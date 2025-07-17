@@ -1,0 +1,75 @@
+# 1. Sink transaction-topic to ClickHouse
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnector
+metadata:
+  name: clickhouse-sink-transaction
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: connect-cluster
+spec:
+  class: com.clickhouse.kafka.connect.ClickHouseSinkConnector
+  tasksMax: 1
+  config:
+    topics: "transaction-topic"
+    topic2TableMap: transaction-topic=transaction_topic
+    hostname: chi-stream-chi-cluster-0-0.clickhouse.svc.cluster.local
+    port: 8123
+    database: default
+    username: ducdh
+    password: test_password
+    key.converter: "org.apache.kafka.connect.storage.StringConverter"
+    value.converter: "io.confluent.connect.avro.AvroConverter"
+    value.converter.schema.registry.url: "http://schema-registry-svc:8081"
+    value.converter.schemas.enable: "true"
+    flush.size: 1000
+---
+# 2. Sink user-topic to ClickHouse
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnector
+metadata:
+  name: clickhouse-sink-user
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: connect-cluster
+spec:
+  class: com.clickhouse.kafka.connect.ClickHouseSinkConnector
+  tasksMax: 1
+  config:
+    topics: "user-topic"
+    topic2TableMap: user-topic=user_topic
+    hostname: chi-stream-chi-cluster-0-0.clickhouse.svc.cluster.local
+    port: 8123
+    database: default
+    username: ducdh
+    password: test_password
+    key.converter: "org.apache.kafka.connect.storage.StringConverter"
+    value.converter: "io.confluent.connect.avro.AvroConverter"
+    value.converter.schema.registry.url: "http://schema-registry-svc:8081"
+    value.converter.schemas.enable: "true"
+    flush.size: 1000
+---
+# 2. Sink card-topic to ClickHouse
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnector
+metadata:
+  name: clickhouse-sink-card
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: connect-cluster
+spec:
+  class: com.clickhouse.kafka.connect.ClickHouseSinkConnector
+  tasksMax: 1
+  config:
+    topics: "card-topic"
+    topic2TableMap: card-topic=card_topic
+    hostname: chi-stream-chi-cluster-0-0.clickhouse.svc.cluster.local
+    port: 8123
+    database: default
+    username: ducdh
+    password: test_password
+    key.converter: "org.apache.kafka.connect.storage.StringConverter"
+    value.converter: "io.confluent.connect.avro.AvroConverter"
+    value.converter.schema.registry.url: "http://schema-registry-svc:8081"
+    value.converter.schemas.enable: "true"
+    flush.size: 1000
+

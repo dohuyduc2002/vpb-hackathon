@@ -1,0 +1,12 @@
+avro-python3
+fastavro
+cachetools
+minio
+slack_sdk
+clickhouse_connect
+apache-airflow==3.0.2
+llama-index==0.12.49
+llama-index-vector-stores-chroma==0.4.2
+llama-index-llms-bedrock==0.3.8
+llama-index-llms-bedrock-converse==0.7.5
+llama-index-embeddings-bedrock

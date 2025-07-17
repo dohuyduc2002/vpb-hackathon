@@ -1,0 +1,95 @@
+{
+  "type": "record",
+  "namespace": "com.example",
+  "name": "Transaction",
+  "fields": [
+    {
+      "name": "idx",
+      "type": "int"
+    },
+    {
+      "name": "user",
+      "type": "string"
+    },
+    {
+      "name": "card",
+      "type": "string"
+    },
+    {
+      "name": "year",
+      "type": "int"
+    },
+    {
+      "name": "month",
+      "type": "int"
+    },
+    {
+      "name": "day",
+      "type": "int"
+    },
+    {
+      "name": "time",
+      "type": "string"
+    },
+    {
+      "name": "amount",
+      "type": "string"
+    },
+    {
+      "name": "use_chip",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "merchant_name",
+      "type": [
+        "null",
+        "long"
+      ],
+      "default": null
+    },
+    {
+      "name": "merchant_city",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "merchant_state",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "zip",
+      "type": [
+        "null",
+        "double"
+      ],
+      "default": null
+    },
+    {
+      "name": "mcc",
+      "type": "int"
+    },
+    {
+      "name": "errors",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "is_fraud",
+      "type": "string"
+    }
+  ]
+}

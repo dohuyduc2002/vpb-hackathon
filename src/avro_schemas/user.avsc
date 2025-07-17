@@ -1,0 +1,91 @@
+{
+  "type": "record",
+  "namespace": "com.example",
+  "name": "User",
+  "fields": [
+    {
+      "name": "idx",
+      "type": "int"
+    },
+    {
+      "name": "user",
+      "type": "string"
+    },
+    {
+      "name": "person",
+      "type": "string"
+    },
+    {
+      "name": "current_age",
+      "type": "int"
+    },
+    {
+      "name": "retirement_age",
+      "type": "int"
+    },
+    {
+      "name": "birth_year",
+      "type": "int"
+    },
+    {
+      "name": "birth_month",
+      "type": "int"
+    },
+    {
+      "name": "gender",
+      "type": "string"
+    },
+    {
+      "name": "address",
+      "type": "string"
+    },
+    {
+      "name": "apartment",
+      "type": [
+        "null",
+        "double"
+      ],
+      "default": null
+    },
+    {
+      "name": "city",
+      "type": "string"
+    },
+    {
+      "name": "state",
+      "type": "string"
+    },
+    {
+      "name": "zipcode",
+      "type": "int"
+    },
+    {
+      "name": "latitude",
+      "type": "double"
+    },
+    {
+      "name": "longitude",
+      "type": "double"
+    },
+    {
+      "name": "per_capita_income__zipcode",
+      "type": "string"
+    },
+    {
+      "name": "yearly_income__person",
+      "type": "string"
+    },
+    {
+      "name": "total_debt",
+      "type": "string"
+    },
+    {
+      "name": "fico_score",
+      "type": "int"
+    },
+    {
+      "name": "num_credit_cards",
+      "type": "int"
+    }
+  ]
+}
