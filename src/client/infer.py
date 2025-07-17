@@ -83,7 +83,7 @@ def predict(input: FraudDetectionInput):
     result = "Yes" if pred == 1 else "No"
 
     avro_record = {
-        "idx" : getidx(),
+        "idx": getidx(),
         "user": str(sample.get("user")),
         "card": str(sample.get("card")),
         "year": int(sample.get("year")),

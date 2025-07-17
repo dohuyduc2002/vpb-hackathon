@@ -5,7 +5,7 @@ This readme will demonstrate how to set up a real-time fraud detection system us
 Firstly, login to your AWS account through AWS CLI, for POC, I'm using `AdministratorAccess` policy. After that navigate to `terraform` directory to provision EKS cluster, this will provision EKS cluster with full acess to S3 and EC2. To be able to provision EKS cluster, you have to configure your AWS credentials with `aws configure` command and login with your AWS IAM account.
 ```bash
 cd terraform
-terraform init #This will download all required providers, in this case I'm using another EKS module to provision EKS cluster
+terraform init #This will download all required providers, in this case I'm using another EKS module to provision EKS cluster so it will use custom lauch template
 terraform apply
 ```
 After the EKS cluster is created, add context to your kubeconfig file to access the EKS cluster with kubectl
@@ -50,6 +50,14 @@ docker build --no-cache \
     .
 ```
 
+4. UI image
+```bash
+docker build --no-cache \
+    -f Dockerfile.ui \
+    -t microwave1005/fraud-model-ui:0.0.1 \
+    --push \
+    .
+```
 ## Instalation
 Be sure to following this order to install all components correctly, you can run this script to install all components
 ### Install Nginx Ingress Controller
@@ -126,7 +134,6 @@ bash ./clickhouse/install.sh
 # After ClickHouse Operator is installed, you can install ClickHouse cluster with this command
 k apply -f clickhouse/clickhouse.yaml -n clickhouse
 ```
-
 ### DBeaver
 For end users to interact with ClickHouse, I'm using DBeaver as a database client with my custom helm chart.
 ```bash
@@ -182,7 +189,6 @@ CREATE TABLE user_topic
 )
 ENGINE = MergeTree
 ORDER BY idx;
-
 ```
 
 3. transaction_topic table
@@ -215,16 +221,29 @@ After create table in ClickHouse and bucket in MinIO, I'm installing 1 Kafka Con
 ```bash
 k apply -f kafka/
 ```
+### Install ChromaDB
+In this POC, I'm using ChromaDB with 1 replica to store embeddings from AWS Bedrock API, you can install ChromaDB with this command
+```bash
+helm repo add chroma https://amikos-tech.github.io/chromadb-chart/
+helm install chroma chroma/chromadb \
+  --namespace chroma \
+  --create-namespace \
+  --set ingress.enabled=true \
+  --set ingress.className=nginx \
+  --set ingress.hosts[0].host=chroma.ducdh.com \
+  --set ingress.hosts[0].paths[0].path=/ \
+  --set ingress.hosts[0].paths[0].pathType=Prefix
+```
 
-### Airflow
-For ETL process, I'm using Airflow to orchestrate the ETL process which load data from Minio to ClickHouse. This will produce intermediate data as `parquet` format in MinIO and then load it to ClickHouse.
+### Install Airflow
+For ETL process and indexing job, I'm using Airflow to orchestrate the ETL process which load data from Minio to ClickHouse. This will produce intermediate data as `parquet` format in MinIO and then load it to ClickHouse.
 ```bash
 helm repo add apache-airflow https://airflow.apache.org
 helm upgrade --install airflow apache-airflow/airflow \
   --namespace airflow \
   --create-namespace \
   --set defaultAirflowRepository=microwave1005/airflow-custom \
-  --set defaultAirflowTag=0.0.2 \
+  --set defaultAirflowTag=0.0.8 \
   --set workers.persistence.size=5Gi \
   --set triggerer.persistence.size=5Gi \
   --set ingress.web.enabled=true \
@@ -235,8 +254,8 @@ To allow airflow to run indexing job to ChromaDB with AWS Bedrock API, you has t
 ```bash
 kubectl create secret generic aws-cred \
   --namespace airflow \
-  --from-literal=AWS_ACCESS_KEY_ID=AKIAQQABDTYWKRDN2ZMR \
-  --from-literal=AWS_SECRET_ACCESS_KEY=T8TEO1gw49hlnnCJGrBy2aycWMjXWZ6c/ik6u30F
+  --from-literal=AWS_ACCESS_KEY_ID=<YOUR_AWS_ACCESS_KEY_ID> \
+  --from-literal=AWS_SECRET_ACCESS_KEY=<YOUR_AWS_SECRET_ACCESS_KEY>
 ```
 ## Model description 
 ### Model installation
@@ -253,17 +272,33 @@ helm upgrade --install api ./helm/api \
   --set ingress.hosts[0].paths[0].path=/ \
   --set ingress.hosts[0].paths[0].pathType=Prefix \
   --set secrets.slackBotTokenKey=slack_bot_token \
-  --set secrets.slackBotToken="xoxb-9061740640727-9075485408565-mQpwYOMJn2mKcFCAgNJZuPqo"
+  --set secrets.slackBotToken="<YOUR_SLACK_BOT_TOKEN>"
+```
+
+### UI installation
+This is the UI for the model, it will allow users to interact with the model and visualize the results. The UI will be deployed as a separate service and will communicate with the model API. The UI will will have 2 tab, one for predicting fraud using trained hybrid graph embedding model with XGBoost and another tab for chatting with the Agent powered by LLaMaIndex and AWS Bedrock API. The UI will be deployed as a separate service and will communicate with the model API.
+```bash
+helm upgrade --install ui ./helm/ui \
+  --namespace api \
+  --set image.tag=0.0.1
+```
+In order to allow to access the AWS Bedrock API, you have to create a secret in the `api` namespace with your AWS credentials:
+```bash
+kubectl create secret generic aws-cred \
+  --namespace api \
+  --from-literal=AWS_ACCESS_KEY_ID=<YOUR_AWS_ACCESS_KEY_ID> \
+  --from-literal=AWS_SECRET_ACCESS_KEY=<YOUR_AWS_SECRET_ACCESS_KEY>
 ```
 
 k port-forward svc/airflow-api-server -n airflow 8080:8080
+helm uninstall airflow -n airflow
 kubectl delete all --all -n airflow --grace-period=0 --force
 k delete pvc --all -n airflow
 
 
 docker build --no-cache \
     -f Dockerfile.airflow \
-    -t microwave1005/airflow-custom:0.0.2 \
+    -t microwave1005/airflow-custom:0.0.8 \
     --push \
     .
 
@@ -275,19 +310,7 @@ kcat -b 34.172.236.120:9094 \
      -C -c 5
 
 
-helm repo add chroma https://amikos-tech.github.io/chromadb-chart/
-helm install chroma chroma/chromadb \
-  --namespace chroma \
-  --create-namespace \
-  --set ingress.enabled=true \
-  --set ingress.className=nginx \
-  --set ingress.hosts[0].host=chroma.ducdh.com \
-  --set ingress.hosts[0].paths[0].path=/ \
-  --set ingress.hosts[0].paths[0].pathType=Prefix
-
-
 kubectl get node  -o json | jq -r '.items[].status.images[].names'
 
 sudo ctr -n k8s.io images rm docker.io/microwave1005/fraud-model-api@sha256:09601b66722967ad6d95320d7cdb1a8841f0de7e4ea0f1f1eebd51a5fd550ac0
-
 sudo ctr -n k8s.io images rm docker.io/microwave1005/fraud-model-api:0.1

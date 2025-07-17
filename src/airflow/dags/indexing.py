@@ -1,27 +1,54 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime
+import os
+import json
 from minio import Minio
 import pandas as pd
-import os
-from llama_index.core import Document, VectorStoreIndex, StorageContext
-from llama_index.vector_stores.chroma import ChromaVectorStore
-from llama_index.embeddings.bedrock import BedrockEmbedding
 import chromadb
+from chromadb.config import Settings
+import boto3
+from datetime import datetime, timedelta
 
+# --- Config ---
 MINIO_ENDPOINT = "minio.minio.svc.cluster.local:9000"
 MINIO_ACCESS_KEY = "minio"
 MINIO_SECRET_KEY = "minio123"
 BUCKET = "stream-bucket"
 MINIO_PREFIX = "etl/intermediate/"
-CHROMA_COLLECTION = "fraud_knowledge_base"
-BEDROCK_REGION = "us-east-1"
-BEDROCK_EMBED_MODEL = "amazon.titan-embed-text-v2:0"
-LOCAL_PARQUET_DIR = "/tmp/parquet_files"  
+CHROMA_COLLECTION = "fraud_titanv2_indexing"
+LOCAL_PARQUET_DIR = "/tmp/parquet_files"
 CHROMA_HOST = "chroma-chromadb.chroma.svc.cluster.local"
 CHROMA_PORT = 8000
+
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+BEDROCK_REGION = "us-east-1"
+BEDROCK_EMBED_MODEL = "amazon.titan-embed-text-v2:0"
+
+default_args = {
+    "depends_on_past": False,
+    "retries": 1,
+    "retry_delay": timedelta(minutes=5),
+}
+
+def get_titan_v2_embedding(text):
+    client = boto3.client(
+        service_name="bedrock-runtime",
+        region_name=BEDROCK_REGION,
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    )
+    body = json.dumps({"inputText": text})
+    response = client.invoke_model(
+        modelId=BEDROCK_EMBED_MODEL,
+        contentType="application/json",
+        accept="application/json",
+        body=body,
+    )
+    embedding = json.loads(response["body"].read())["embedding"]
+    return embedding  # 1024 dimension
+
 
 def download_parquet_files(**kwargs):
     if not os.path.exists(LOCAL_PARQUET_DIR):
@@ -32,9 +59,7 @@ def download_parquet_files(**kwargs):
         secret_key=MINIO_SECRET_KEY,
         secure=False,
     )
-    objects = minio_client.list_objects(
-        BUCKET, prefix=MINIO_PREFIX, recursive=True
-    )
+    objects = minio_client.list_objects(BUCKET, prefix=MINIO_PREFIX, recursive=True)
     downloaded_files = []
     for obj in objects:
         if obj.object_name.endswith(".parquet"):
@@ -43,65 +68,75 @@ def download_parquet_files(**kwargs):
             local_path = os.path.join(LOCAL_PARQUET_DIR, fname)
             with open(local_path, "wb") as f:
                 f.write(data)
-            print(f"Downloaded {obj.object_name} -> {local_path}")
             downloaded_files.append(local_path)
-    print(f"Done! Downloaded {len(downloaded_files)} parquet files to {LOCAL_PARQUET_DIR}")
     kwargs["ti"].xcom_push(key="downloaded_files", value=downloaded_files)
 
+
 def index_parquet_files_as_documents(**kwargs):
-    downloaded_files = kwargs["ti"].xcom_pull(key="downloaded_files", task_ids="download_parquet_files")
+    downloaded_files = kwargs["ti"].xcom_pull(
+        key="downloaded_files", task_ids="download_parquet_files"
+    )
     if not downloaded_files:
-        print("No files to index!")
         return
 
-    chroma_client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
-    collection = chroma_client.get_or_create_collection("fraud_knowledge_base")
-    vector_store = ChromaVectorStore(chroma_collection=collection)
-    storage_context = StorageContext.from_defaults(vector_store=vector_store)
-    embed_model = BedrockEmbedding(
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        region_name=BEDROCK_REGION, 
-        model_id=BEDROCK_EMBED_MODEL
+    # Connect to ChromaDB
+    chroma_client = chromadb.HttpClient(
+        host=CHROMA_HOST,
+        port=CHROMA_PORT,
+        settings=Settings(allow_reset=True),
     )
+    collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION)
+
     indexed_files = 0
     for fpath in downloaded_files:
         fname = os.path.basename(fpath)
         table_name = fname.split("_")[0]
         df = pd.read_parquet(fpath)
         file_text = df.to_csv(index=False)
-        doc = Document(
-            text=file_text,
-            metadata={
-                "table": table_name,
-                "file_name": fname,
-                "row_count": len(df),
-                "columns": list(df.columns),
-            },
-        )
-        VectorStoreIndex.from_documents(
-            [doc], storage_context=storage_context, embed_model=embed_model
-        )
-        print(f"Indexed {fname} ({len(df)} rows, table: {table_name})")
-        indexed_files += 1
+        text_to_embed = file_text[:1500]
+        embedding = get_titan_v2_embedding(text_to_embed)
 
+        collection.add(
+            documents=[file_text],
+            embeddings=[embedding],
+            metadatas=[
+                {
+                    "table": table_name,
+                    "file_name": fname,
+                    "row_count": len(df),
+                    "columns": ",".join(df.columns),
+                }
+            ],
+            ids=[fname],
+        )
+        indexed_files += 1
         os.remove(fpath)
-    print(f"Done! Total {indexed_files} parquet files indexed as documents.")
+
 
 with DAG(
-    "load_and_index_parquet_files_as_documents",
-    schedule="0 0 * * *",  
-    start_date=datetime(2023, 1, 1),
+    "boto3_index_parquet_files_to_chromadb",
+    default_args=default_args,
+    description="Indexing job from MinIO Parquet to ChromaDb",
+    schedule="0 0 * * *",
+    start_date=datetime(2024, 7, 1),
     catchup=False,
-    tags=["parquet", "minio", "chromadb"],
+    tags=["parquet", "minio", "chromadb", "boto3"],
 ) as dag:
-    load_task = PythonOperator(
-        task_id="download_parquet_files", 
+    download_task = PythonOperator(
+        task_id="download_parquet_files",
         python_callable=download_parquet_files,
     )
     index_task = PythonOperator(
-        task_id="index_parquet_docs_to_chroma",
+        task_id="index_parquet_files_as_documents",
         python_callable=index_parquet_files_as_documents,
     )
 
-    load_task >> index_task
+    download_task >> index_task
+
+    download_task.doc_md = "### Download Task: Download Parquet files from MinIO bucket."
+    index_task.doc_md = "### Index Task: Read intermediate files from MinIO, generate embeddings using Amazon Titan and index into ChromaDB."
+
+    dag.doc_md = """
+        ### Boto3 Indexing DAG
+        This DAG downloads Parquet files from MinIO, extracts text, generates embeddings using Amazon Titan
+        and indexes them into ChromaDB using XCom."""

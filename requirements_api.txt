@@ -12,3 +12,4 @@ fastavro
 httpx
 cachetools
 authlib
+clickhouse-sqlalchemy==0.3.2

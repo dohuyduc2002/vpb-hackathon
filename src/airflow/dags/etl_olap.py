@@ -91,7 +91,7 @@ def extract(**kwargs):
         usecols=trans_cols,
         filter_func=filter_fraud,
     )
-    user_cols = ["idx", "person", "current_age", "total_debt"]
+    user_cols = ["user", "person", "current_age", "total_debt"]
     df_user = read_all_avro_in_topic(
         BUCKET, "user-topic", minio_client, usecols=user_cols
     )

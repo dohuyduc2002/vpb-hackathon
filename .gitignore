@@ -4,6 +4,7 @@ terraform/.terraform.lock.hcl
 terraform/terraform.tfstate
 terraform/terraform.tfstate.backup
 
+abc.md
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
