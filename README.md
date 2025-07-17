@@ -1,6 +1,7 @@
 # vpb-hackathon
 This readme will demonstrate how to set up a real-time fraud detection system using Kafka, Flink, Milvus, ClickHouse, and MinIO on a EKS cluster. The system will process credit card transactions in real-time, detect fraudulent activities, and store the data for further analysis.
 
+![arch](/media/arch.svg)
 ## Install EKS cluster
 Firstly, login to your AWS account through AWS CLI, for POC, I'm using `AdministratorAccess` policy. After that navigate to `terraform` directory to provision EKS cluster, this will provision EKS cluster with full acess to S3 and EC2. To be able to provision EKS cluster, you have to configure your AWS credentials with `aws configure` command and login with your AWS IAM account.
 ```bash
@@ -45,7 +46,7 @@ docker build --no-cache \
 ```bash
 docker build --no-cache \
     -f Dockerfile.airflow \
-    -t microwave1005/airflow-custom:0.0.3 \
+    -t microwave1005/airflow-custom:0.0.9 \
     --push \
     .
 ```
@@ -125,6 +126,8 @@ In this repository, I'm producing data as Avro format to Kafka topics, so you ne
 cd src/producer
 bash run.sh
 ```
+![Kafka](/media/kafka.png)
+
 ### Clickhouse
 Because we are producing streaming data, so ClickHouse is the suitable OLAP database to store and analyze data. In this POC, I'm using ClickHouse Operator to manage ClickHouse cluster and ClickHouse tables. You can install ClickHouse Operator with this command
 ```bash
@@ -162,6 +165,7 @@ CREATE TABLE card_topic
 ENGINE = MergeTree()
 ORDER BY idx;
 ```
+![card-topic](/media/card-topic.png)
 2. user_topic table
 ```sql
 CREATE TABLE user_topic
@@ -190,6 +194,7 @@ CREATE TABLE user_topic
 ENGINE = MergeTree
 ORDER BY idx;
 ```
+![user-topic](/media/user-topic.png)
 
 3. transaction_topic table
 ```sql
@@ -215,6 +220,7 @@ CREATE TABLE transaction_topic
 ENGINE = MergeTree
 ORDER BY idx;
 ```
+![transaction-topic](/media/transaction-topic.png)
 
 ### Install Kafka Connect and Kafka Connector
 After create table in ClickHouse and bucket in MinIO, I'm installing 1 Kafka Connect cluster with 6 connectors to consume data from Kafka topics and sink to ClickHouse and MinIO. The Kafka Connect cluster will be configured to use the Confluent Schema Registry to register the Avro schemas for each topic, each message will be serialized as `Avro` format for value and `String` format for key.
@@ -243,13 +249,15 @@ helm upgrade --install airflow apache-airflow/airflow \
   --namespace airflow \
   --create-namespace \
   --set defaultAirflowRepository=microwave1005/airflow-custom \
-  --set defaultAirflowTag=0.0.8 \
+  --set defaultAirflowTag=0.0.9 \
   --set workers.persistence.size=5Gi \
   --set triggerer.persistence.size=5Gi \
   --set ingress.web.enabled=true \
   --set ingress.web.hosts[0]=airflow.ducdh.com \
   --set ingress.web.ingressClassName=nginx
 ```
+![job1](/media/job1.png)
+![job2](/media/job2.png)
 To allow airflow to run indexing job to ChromaDB with AWS Bedrock API, you has to ingest secret in to airflow namesapce by this command:
 ```bash
 kubectl create secret generic aws-cred \
@@ -277,6 +285,8 @@ helm upgrade --install api ./helm/api \
 
 ### UI installation
 This is the UI for the model, it will allow users to interact with the model and visualize the results. The UI will be deployed as a separate service and will communicate with the model API. The UI will will have 2 tab, one for predicting fraud using trained hybrid graph embedding model with XGBoost and another tab for chatting with the Agent powered by LLaMaIndex and AWS Bedrock API. The UI will be deployed as a separate service and will communicate with the model API.
+
+![UI](/media/ui-fraud.png)
 ```bash
 helm upgrade --install ui ./helm/ui \
   --namespace api \
@@ -289,28 +299,4 @@ kubectl create secret generic aws-cred \
   --from-literal=AWS_ACCESS_KEY_ID=<YOUR_AWS_ACCESS_KEY_ID> \
   --from-literal=AWS_SECRET_ACCESS_KEY=<YOUR_AWS_SECRET_ACCESS_KEY>
 ```
-
-k port-forward svc/airflow-api-server -n airflow 8080:8080
-helm uninstall airflow -n airflow
-kubectl delete all --all -n airflow --grace-period=0 --force
-k delete pvc --all -n airflow
-
-
-docker build --no-cache \
-    -f Dockerfile.airflow \
-    -t microwave1005/airflow-custom:0.0.8 \
-    --push \
-    .
-
-
-kcat -b 34.172.236.120:9094 \
-     -t user-topic \
-     -r http://34.59.250.15:8081 \
-     -s value=avro \
-     -C -c 5
-
-
-kubectl get node  -o json | jq -r '.items[].status.images[].names'
-
-sudo ctr -n k8s.io images rm docker.io/microwave1005/fraud-model-api@sha256:09601b66722967ad6d95320d7cdb1a8841f0de7e4ea0f1f1eebd51a5fd550ac0
-sudo ctr -n k8s.io images rm docker.io/microwave1005/fraud-model-api:0.1
+![agent](/media/agent.png)

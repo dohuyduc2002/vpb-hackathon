@@ -110,7 +110,6 @@ def index_parquet_files_as_documents(**kwargs):
             ids=[fname],
         )
         indexed_files += 1
-        os.remove(fpath)
 
 
 with DAG(
