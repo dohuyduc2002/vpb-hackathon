@@ -1,7 +1,7 @@
 # vpb-hackathon
 This readme will demonstrate how to set up a real-time fraud detection system using Kafka, Flink, Milvus, ClickHouse, and MinIO on a EKS cluster. The system will process credit card transactions in real-time, detect fraudulent activities, and store the data for further analysis.
 
-![arch](/media/arch.svg)
+![arch](/media/arch2.svg)
 ## Install EKS cluster
 Firstly, login to your AWS account through AWS CLI, for POC, I'm using `AdministratorAccess` policy. After that navigate to `terraform` directory to provision EKS cluster, this will provision EKS cluster with full acess to S3 and EC2. To be able to provision EKS cluster, you have to configure your AWS credentials with `aws configure` command and login with your AWS IAM account.
 ```bash
@@ -126,7 +126,7 @@ In this repository, I'm producing data as Avro format to Kafka topics, so you ne
 cd src/producer
 bash run.sh
 ```
-![Kafka](/media/kafka.png)
+![kafka](media/kafka.png)
 
 ### Clickhouse
 Because we are producing streaming data, so ClickHouse is the suitable OLAP database to store and analyze data. In this POC, I'm using ClickHouse Operator to manage ClickHouse cluster and ClickHouse tables. You can install ClickHouse Operator with this command
